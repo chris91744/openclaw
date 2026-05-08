@@ -178,6 +178,7 @@ services:
       - ${OPENCLAW_WORKSPACE_DIR}/prestigio:/data
       - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace:ro
       - ./prestigio-write-service/index.js:/app/index.js:ro
+      - ${PRESTIGIO_APP_DIR:-/Users/chrisreyes/prestigio-app}/js/quote-plan-contracts.js:/app/quote-plan-contracts.js:ro
       - ${PRESTIGIO_APP_DIR:-/Users/chrisreyes/prestigio-app}/js/quote-description-generators.js:/app/quote-description-generators.js:ro
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:3006/health"]

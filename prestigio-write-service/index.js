@@ -5,10 +5,20 @@ const path = require('path');
 
 const SHARED_DESCRIPTION_GENERATOR_PATH =
   process.env.QUOTE_DESCRIPTION_GENERATORS_PATH || '/app/quote-description-generators.js';
+const SHARED_QUOTE_PLAN_CONTRACTS_PATH =
+  process.env.QUOTE_PLAN_CONTRACTS_PATH || '/app/quote-plan-contracts.js';
+const loadedQuotePlanContracts = require(SHARED_QUOTE_PLAN_CONTRACTS_PATH);
+const quotePlanContracts = Object.keys(loadedQuotePlanContracts || {}).length
+  ? loadedQuotePlanContracts
+  : globalThis.QuotePlanContracts;
 const loadedQuoteDescriptionGenerators = require(SHARED_DESCRIPTION_GENERATOR_PATH);
 const quoteDescriptionGenerators = Object.keys(loadedQuoteDescriptionGenerators || {}).length
   ? loadedQuoteDescriptionGenerators
   : globalThis.PrestigioQuoteDescriptionGenerators;
+
+if (!quotePlanContracts || typeof quotePlanContracts.isQuoteDescriptionAffectingPatch !== 'function') {
+  throw new Error(`Unable to load quote plan contracts from ${SHARED_QUOTE_PLAN_CONTRACTS_PATH}`);
+}
 
 // --- Config ---
 const PORT = 3006;
@@ -2116,6 +2126,16 @@ function deepMergeQuoteRevisionObjects(base, updates) {
   return merged;
 }
 
+function isDescriptionAffectingQuotePatch(category, patch) {
+  if (
+    quotePlanContracts &&
+    typeof quotePlanContracts.isQuoteDescriptionAffectingPatch === 'function'
+  ) {
+    return quotePlanContracts.isQuoteDescriptionAffectingPatch(category, patch);
+  }
+  return Boolean(patch && typeof patch === 'object' && patch.description !== undefined);
+}
+
 function mergeQuoteRevisionPatchIntoItem(item, patch) {
   const merged = { ...patch };
   if (patch.form_data !== undefined) {
@@ -2278,12 +2298,15 @@ function mergeQuoteRevisionPatchIntoItem(item, patch) {
     finalFormData.category ||
     ''
   );
+  const shouldRegenerateForSemanticPatch = isDescriptionAffectingQuotePatch(
+    category || finalCategory,
+    patch
+  );
   const shouldRegenerateReupholsteryDescription = (
     merged.description === undefined &&
     (category === 'reupholstery' || finalCategory === 'reupholstery') &&
     (
-      patch.form_data !== undefined ||
-      patch.cost_breakdown !== undefined ||
+      shouldRegenerateForSemanticPatch ||
       Object.keys(REUPHOLSTERY_BOOLEAN_FIELD_MAP).some(key => patch[key] !== undefined)
     )
   );
@@ -2300,10 +2323,7 @@ function mergeQuoteRevisionPatchIntoItem(item, patch) {
   const shouldRegeneratePillowDescription = (
     merged.description === undefined &&
     (category === 'pillows' || category === 'pillow' || finalCategory === 'pillows' || finalCategory === 'pillow') &&
-    (
-      patch.form_data !== undefined ||
-      patch.cost_breakdown !== undefined
-    )
+    shouldRegenerateForSemanticPatch
   );
   if (shouldRegeneratePillowDescription) {
     merged.form_data = {
@@ -2319,10 +2339,7 @@ function mergeQuoteRevisionPatchIntoItem(item, patch) {
   const shouldRegenerateCushionDescription = (
     merged.description === undefined &&
     (category === 'cushions' || category === 'cushion' || finalCategory === 'cushions' || finalCategory === 'cushion') &&
-    (
-      patch.form_data !== undefined ||
-      patch.cost_breakdown !== undefined
-    )
+    shouldRegenerateForSemanticPatch
   );
   if (shouldRegenerateCushionDescription) {
     merged.form_data = {
@@ -2338,10 +2355,7 @@ function mergeQuoteRevisionPatchIntoItem(item, patch) {
   const shouldRegenerateSeatingDescription = (
     merged.description === undefined &&
     (category === 'seating' || category === 'custom-furniture' || finalCategory === 'seating' || finalCategory === 'custom-furniture') &&
-    (
-      patch.form_data !== undefined ||
-      patch.cost_breakdown !== undefined
-    )
+    shouldRegenerateForSemanticPatch
   );
   if (shouldRegenerateSeatingDescription) {
     merged.form_data = {
@@ -2358,10 +2372,7 @@ function mergeQuoteRevisionPatchIntoItem(item, patch) {
   const shouldRegenerateBedDescription = (
     merged.description === undefined &&
     (category === 'bed' || category === 'beds' || finalCategory === 'bed' || finalCategory === 'beds') &&
-    (
-      patch.form_data !== undefined ||
-      patch.cost_breakdown !== undefined
-    )
+    shouldRegenerateForSemanticPatch
   );
   if (shouldRegenerateBedDescription) {
     merged.form_data = {
@@ -2377,10 +2388,7 @@ function mergeQuoteRevisionPatchIntoItem(item, patch) {
   const shouldRegenerateOttomanDescription = (
     merged.description === undefined &&
     (category === 'ottoman' || category === 'ottomans' || finalCategory === 'ottoman' || finalCategory === 'ottomans') &&
-    (
-      patch.form_data !== undefined ||
-      patch.cost_breakdown !== undefined
-    )
+    shouldRegenerateForSemanticPatch
   );
   if (shouldRegenerateOttomanDescription) {
     merged.form_data = {
@@ -2396,10 +2404,7 @@ function mergeQuoteRevisionPatchIntoItem(item, patch) {
   const shouldRegenerateSoftgoodsDescription = (
     merged.description === undefined &&
     (category === 'softgoods' || category === 'soft-goods' || category === 'slipcover' || finalCategory === 'softgoods' || finalCategory === 'soft-goods' || finalCategory === 'slipcover') &&
-    (
-      patch.form_data !== undefined ||
-      patch.cost_breakdown !== undefined
-    )
+    shouldRegenerateForSemanticPatch
   );
   if (shouldRegenerateSoftgoodsDescription) {
     merged.form_data = {
@@ -2415,10 +2420,7 @@ function mergeQuoteRevisionPatchIntoItem(item, patch) {
   const shouldRegeneratePatioDescription = (
     merged.description === undefined &&
     (category === 'patio' || category === 'outdoor' || finalCategory === 'patio' || finalCategory === 'outdoor') &&
-    (
-      patch.form_data !== undefined ||
-      patch.cost_breakdown !== undefined
-    )
+    shouldRegenerateForSemanticPatch
   );
   if (shouldRegeneratePatioDescription) {
     merged.form_data = {
@@ -2434,10 +2436,7 @@ function mergeQuoteRevisionPatchIntoItem(item, patch) {
   const shouldRegenerateRestuffingDescription = (
     merged.description === undefined &&
     (category === 'restuffing' || category === 'restuff' || finalCategory === 'restuffing' || finalCategory === 'restuff') &&
-    (
-      patch.form_data !== undefined ||
-      patch.cost_breakdown !== undefined
-    )
+    shouldRegenerateForSemanticPatch
   );
   if (shouldRegenerateRestuffingDescription) {
     merged.form_data = {
@@ -3003,7 +3002,9 @@ module.exports = {
   clearActivePricingSettings,
   getDraftQuoteSiteVisitTotal,
   isAllowedAttachmentPath,
+  isDescriptionAffectingQuotePatch,
   loadLivePricingSettings,
+  mergeQuoteRevisionPatchIntoItem,
   normalizeAttachmentPath,
   setActivePricingSettingsFromRows,
   summarizeDraftQuotePricingModes,

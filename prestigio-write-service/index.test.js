@@ -4,6 +4,7 @@ const path = require('node:path');
 
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://example.supabase.co';
 process.env.SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || 'test-key';
+process.env.QUOTE_PLAN_CONTRACTS_PATH = path.resolve(__dirname, '../../prestigio-app/js/quote-plan-contracts.js');
 process.env.QUOTE_DESCRIPTION_GENERATORS_PATH = path.resolve(__dirname, '../../prestigio-app/js/quote-description-generators.js');
 
 const {
@@ -11,6 +12,7 @@ const {
   clearActivePricingSettings,
   getDraftQuoteSiteVisitTotal,
   isAllowedAttachmentPath,
+  mergeQuoteRevisionPatchIntoItem,
   normalizeAttachmentPath,
   setActivePricingSettingsFromRows,
   summarizeDraftQuotePricingModes,
@@ -186,4 +188,80 @@ test('reference image safety check accepts local mail attachment paths', () => {
       process.env.OPENCLAW_WORKSPACE_DIR = priorWorkspace;
     }
   }
+});
+
+test('quote revision sell price only does not rewrite description or form data', () => {
+  const mergedPatch = mergeQuoteRevisionPatchIntoItem(
+    {
+      category: 'softgoods',
+      description: 'NEW CUSTOM TABLE SKIRT\nEDGE: PLAIN HEM',
+      sell_price: 510,
+      form_data: {
+        category: 'softgoods',
+        softgoodsType: 'table-skirt',
+        softgoodsEdge: 'plain-hem',
+        softgoodsLength: '96'
+      }
+    },
+    {
+      sell_price: 350
+    }
+  );
+
+  assert.equal(mergedPatch.sell_price, 350);
+  assert.equal(Object.hasOwn(mergedPatch, 'description'), false);
+  assert.equal(Object.hasOwn(mergedPatch, 'form_data'), false);
+});
+
+test('quote revision cost breakdown only does not rewrite description or form data', () => {
+  const mergedPatch = mergeQuoteRevisionPatchIntoItem(
+    {
+      category: 'softgoods',
+      description: 'NEW CUSTOM TABLE SKIRT\nEDGE: PLAIN HEM',
+      sell_price: 510,
+      cost_breakdown: {
+        labor: { hours: 4, rate: 130 }
+      },
+      form_data: {
+        category: 'softgoods',
+        softgoodsType: 'table-skirt',
+        softgoodsEdge: 'plain-hem',
+        softgoodsLength: '96'
+      }
+    },
+    {
+      cost_breakdown: {
+        labor: { hours: 2.75, rate: 130 }
+      }
+    }
+  );
+
+  assert.equal(mergedPatch.sell_price, 350);
+  assert.equal(Object.hasOwn(mergedPatch, 'description'), false);
+  assert.equal(Object.hasOwn(mergedPatch, 'form_data'), false);
+});
+
+test('quote revision semantic form data change may regenerate description', () => {
+  const mergedPatch = mergeQuoteRevisionPatchIntoItem(
+    {
+      category: 'softgoods',
+      description: 'NEW CUSTOM TABLE SKIRT\nEDGE: PLAIN HEM',
+      sell_price: 510,
+      form_data: {
+        category: 'softgoods',
+        softgoodsType: 'table-skirt',
+        room: 'Dining Room',
+        softgoodsEdge: 'plain-hem',
+        softgoodsLength: '96'
+      }
+    },
+    {
+      form_data: {
+        softgoodsEdge: 'flanged'
+      }
+    }
+  );
+
+  assert.match(mergedPatch.description, /EDGE: FLANGED/);
+  assert.equal(mergedPatch.form_data.softgoodsEdge, 'flanged');
 });
