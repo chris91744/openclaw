@@ -192,7 +192,10 @@ async function ensureLivePricingSettingsForDraftItems(items) {
 function revisionOperationsNeedLivePricingSettings(operations) {
   return Array.isArray(operations) && operations.some(op => (
     op?.op === 'update_item' &&
-    costBreakdownNeedsLivePricingSettings(op?.updates?.cost_breakdown)
+    (
+      costBreakdownNeedsLivePricingSettings(op?.updates?.cost_breakdown) ||
+      (op?.updates?.form_data !== undefined && !hasDirectSellPriceUpdate(op?.updates))
+    )
   ));
 }
 
@@ -293,7 +296,7 @@ const ACTION_FIELDS = {
   'create-xero-contact': ['client_id', 'name', 'company', 'email', 'phone', 'source_context', 'requested_at', 'confirmed', 'confirm_digest'],
   'create-client-project': ['client', 'project', 'source_context', 'requested_at', 'confirmed', 'confirm_digest'],
   'create-draft-quote': ['quote', 'items', 'source_context', 'requested_at', 'confirmed', 'confirm_digest'],
-  'revise-existing-quote': ['quote', 'revision_reason', 'operations', 'expected', 'source_context', 'requested_at', 'confirmed', 'confirm_digest']
+  'revise-existing-quote': ['quote', 'revision_reason', 'operations', 'expected', 'source_context', 'requested_at', 'confirmed', 'confirm_digest', 'manual_price_override_authorized']
 };
 
 const CONFIRMABLE_ACTIONS = ['set-order-item-production-field', 'set-item-spec-field', 'create-client-project', 'create-draft-quote', 'create-xero-contact', 'revise-existing-quote'];
@@ -1640,6 +1643,7 @@ function normalizeRestuffingDraftItem(item, index) {
 
 function normalizeDraftItem(item, index) {
   const formData = cleanObject(item.form_data) || {};
+  assertAppQuoteTaxonomyAllowed(item, `draft quote item ${index + 1}`);
   const category = normalizeKey(item.category || formData.category || item.item_type || item.type);
   if (category === 'reupholstery') {
     return normalizeReupholsteryDraftItem(item, index);
@@ -2112,6 +2116,75 @@ function buildQuoteRevisionItemUpdates(updates) {
   return Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined));
 }
 
+function truthyAuthorization(value) {
+  return value === true || value === 'true' || value === 'yes' || value === 'authorized';
+}
+
+function hasDirectSellPriceUpdate(updates) {
+  const raw = cleanObject(updates) || {};
+  return Object.prototype.hasOwnProperty.call(raw, 'sell_price');
+}
+
+function quoteRevisionManualPriceAuthorized(fields, op) {
+  const updates = cleanObject(op?.updates) || {};
+  return (
+    truthyAuthorization(fields?.manual_price_override_authorized) ||
+    truthyAuthorization(op?.manual_price_override_authorized) ||
+    truthyAuthorization(updates.manual_price_override_authorized)
+  );
+}
+
+function assertQuoteRevisionManualPricingAllowed(fields, op) {
+  if (!hasDirectSellPriceUpdate(op?.updates)) return;
+  if (quoteRevisionManualPriceAuthorized(fields, op)) return;
+  throw new Error(
+    'Manual sell_price overrides are blocked for quote revisions. ' +
+    'Change form_data/cost_breakdown pricing drivers and omit sell_price, or add manual_price_override_authorized: true only after Chris explicitly approves a manual price override for this line.'
+  );
+}
+
+function assertAppQuoteTaxonomyAllowed(item, context = 'quote item') {
+  const formData = cleanObject(item?.form_data) || {};
+  const category = normalizeKey(item?.category || formData.category);
+  const type = normalizeKey(
+    item?.item_type ||
+    item?.type ||
+    formData.type ||
+    formData.cushionType ||
+    formData.pillowType ||
+    ''
+  );
+
+  const cushionCategories = new Set(['cushion', 'cushions']);
+
+  if (type === 'cushion-set' && !cushionCategories.has(category)) {
+    throw new Error(
+      `${context} uses app cushion taxonomy value "cushion-set" outside category "cushions". ` +
+      'Use category "cushions" for seat/back cushion packages, or choose an app-supported type for the selected category.'
+    );
+  }
+
+  if (cushionCategories.has(category)) {
+    const validCushionTypes = new Set(['window-seat', 'bench', 'chair-pad', 'cushion-set']);
+    if (type && !validCushionTypes.has(type)) {
+      throw new Error(
+        `${context} uses unsupported cushion item_type "${type}". ` +
+        `Valid cushion types are: ${Array.from(validCushionTypes).join(', ')}.`
+      );
+    }
+  }
+
+  if (category === 'seating') {
+    const validSeatingTypes = new Set(['sofa', 'loveseat', 'chair', 'sectional', 'banquette']);
+    if (type && !validSeatingTypes.has(type)) {
+      throw new Error(
+        `${context} uses unsupported seating item_type "${type}". ` +
+        `Valid seating types are: ${Array.from(validSeatingTypes).join(', ')}.`
+      );
+    }
+  }
+}
+
 function deepMergeQuoteRevisionObjects(base, updates) {
   const baseObject = cleanObject(base) || {};
   const updateObject = cleanObject(updates) || {};
@@ -2153,6 +2226,7 @@ function mergeQuoteRevisionPatchIntoItem(item, patch) {
     item.form_data?.category ||
     ''
   );
+  assertAppQuoteTaxonomyAllowed(applyQuoteRevisionItemPatch(item, merged), 'quote revision item');
   const looksLikeReupholsteryBreakdown = Boolean(
     category !== 'seating' &&
     category !== 'custom-furniture' &&
@@ -2536,6 +2610,7 @@ function buildResolvedQuoteRevisionPlan(fields, quote, items) {
       if (updatePatches.has(op.item_id)) {
         throw new Error(`Duplicate update_item operation for ${op.item_id}`);
       }
+      assertQuoteRevisionManualPricingAllowed(fields, op);
       const patch = buildQuoteRevisionItemUpdates(op.updates);
       if (!Object.keys(patch).length) {
         throw new Error(`update_item operation for ${op.item_id} has no supported updates`);
@@ -2999,6 +3074,7 @@ if (require.main === module) {
 
 module.exports = {
   buildConfirmSummary,
+  assertQuoteRevisionManualPricingAllowed,
   clearActivePricingSettings,
   getDraftQuoteSiteVisitTotal,
   isAllowedAttachmentPath,

@@ -8,6 +8,7 @@ process.env.QUOTE_PLAN_CONTRACTS_PATH = path.resolve(__dirname, '../../prestigio
 process.env.QUOTE_DESCRIPTION_GENERATORS_PATH = path.resolve(__dirname, '../../prestigio-app/js/quote-description-generators.js');
 
 const {
+  assertQuoteRevisionManualPricingAllowed,
   buildConfirmSummary,
   clearActivePricingSettings,
   getDraftQuoteSiteVisitTotal,
@@ -211,6 +212,107 @@ test('quote revision sell price only does not rewrite description or form data',
   assert.equal(mergedPatch.sell_price, 350);
   assert.equal(Object.hasOwn(mergedPatch, 'description'), false);
   assert.equal(Object.hasOwn(mergedPatch, 'form_data'), false);
+});
+
+test('quote revision direct sell price requires explicit manual override authorization', () => {
+  assert.throws(
+    () => assertQuoteRevisionManualPricingAllowed(
+      {},
+      {
+        op: 'update_item',
+        item_id: 'item-1',
+        updates: {
+          sell_price: 7450,
+          form_data: { width: 124 }
+        }
+      }
+    ),
+    /Manual sell_price overrides are blocked/
+  );
+
+  assert.doesNotThrow(
+    () => assertQuoteRevisionManualPricingAllowed(
+      {},
+      {
+        op: 'update_item',
+        item_id: 'item-1',
+        manual_price_override_authorized: true,
+        updates: {
+          sell_price: 7450,
+          form_data: { width: 124 }
+        }
+      }
+    )
+  );
+
+  assert.doesNotThrow(
+    () => assertQuoteRevisionManualPricingAllowed(
+      {},
+      {
+        op: 'update_item',
+        item_id: 'item-1',
+        updates: {
+          form_data: { width: 124 },
+          cost_breakdown: {
+            labor: { hours: 2, rate: 130 }
+          }
+        }
+      }
+    )
+  );
+});
+
+test('quote revisions reject cushion-set outside the app cushions category', () => {
+  assert.throws(
+    () => mergeQuoteRevisionPatchIntoItem(
+      {
+        category: 'seating',
+        type: 'cushion-set',
+        item_type: 'cushion-set',
+        description: 'OLD CUSHION SET',
+        sell_price: 4670,
+        form_data: {
+          category: 'seating',
+          type: 'cushion-set',
+          width: 124,
+          depth: 47,
+          height: 4
+        }
+      },
+      {
+        form_data: {
+          width: 126
+        }
+      }
+    ),
+    /cushion-set" outside category "cushions"/
+  );
+});
+
+test('quote revisions allow app-owned cushion-set taxonomy in cushions category', () => {
+  assert.doesNotThrow(
+    () => mergeQuoteRevisionPatchIntoItem(
+      {
+        category: 'cushions',
+        type: 'cushion-set',
+        item_type: 'cushion-set',
+        description: 'NEW CUSTOM CUSHION SET',
+        sell_price: 4670,
+        form_data: {
+          category: 'cushions',
+          type: 'cushion-set',
+          seatCount: 2,
+          seatWidth: 62,
+          backCount: 2
+        }
+      },
+      {
+        form_data: {
+          seatWidth: 63
+        }
+      }
+    )
+  );
 });
 
 test('quote revision cost breakdown only does not rewrite description or form data', () => {
