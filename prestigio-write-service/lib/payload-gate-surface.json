@@ -1,0 +1,12 @@
+{
+  "action": "create-draft-quote",
+  "fingerprint": "94d25d5eda4d15ea593ad8584559ff876167208ec52237a3640ebe4e52e47961",
+  "gate": "prestigio-create-draft-quote",
+  "version": 1,
+  "source": {
+    "app_path": "js/quote-intake/payload-gate/",
+    "surface_file": "surface.json",
+    "category_rules_sha256": "51296b2c8bf563c151ed50267865011244b5c177284f812fe629e3b85ed621b2",
+    "validator_sha256": "5c90a6398666a7509a503ce97100b2de3e725fa427425b4ed1c7f03ed82e02c3"
+  }
+}

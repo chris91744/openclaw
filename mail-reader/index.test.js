@@ -176,6 +176,155 @@ test('processActionRequest accepts underscore action aliases on the legacy mail 
   assert.equal(response.result.subject, 'Re: Prestigio Quote: Hill Rd / Pillow Request — $2,035');
 });
 
+test('create-quote-handoff action writes a safe packet without sending or drafting mail', async () => {
+  const requestId = 'quote-handoff-safe';
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mail-reader-handoff-'));
+  const inboxDir = path.join(root, 'prestigio', 'quote-intake-handoffs', 'inbox');
+  const rootDir = path.join(root, 'prestigio', 'quote-intake-handoffs');
+
+  await helpers.processActionRequest({
+    action: 'create-quote-handoff',
+    requestId,
+    messageId: 'message-quote-1',
+    mailbox: 'chris@prestigiocustom.com',
+    mailboxKey: 'chris',
+    downloadAttachments: false,
+    createdAt: '2026-05-16T12:05:00.000Z',
+    threadDetail: {
+      conversationId: 'conversation-quote-1',
+      subject: 'Tigertail // Family Patio Sectional',
+      messages: [
+        {
+          id: 'message-quote-1',
+          subject: 'Tigertail // Family Patio Sectional',
+          from: 'Designer <designer@example.com>',
+          to: ['chris@prestigiocustom.com'],
+          cc: [],
+          date: '2026-05-16T12:00:00.000Z',
+          body: 'Can you quote replacement cushions from this drawing?',
+          hasAttachments: true
+        }
+      ]
+    },
+    attachmentManifest: [
+      {
+        filename: 'sectional.pdf',
+        contentType: 'application/pdf',
+        size: 1000,
+        capture: 'metadata_only'
+      }
+    ],
+    mailroomTask: {
+      title: 'QUOTE: Tigertail - family patio sectional',
+      summary: 'Designer asked for replacement cushions.'
+    }
+  }, {
+    requestId,
+    legacy: false,
+    actionHandlers: {
+      'create-quote-handoff': async (request) => ({
+        responseResult: await helpers.createQuoteHandoffFromRequest(request, {
+          inboxDir,
+          rootDir
+        })
+      })
+    }
+  });
+
+  const response = JSON.parse(fs.readFileSync(helpers.actionResponsePathForRequest(requestId), 'utf8'));
+  assert.equal(response.success, true);
+  assert.equal(response.action, 'create-quote-handoff');
+  assert.equal(response.result.sourceKey, 'mailroom:microsoft:chris:conversation-quote-1:message-quote-1');
+  assert.equal(response.result.created, true);
+  assert.equal(response.result.attachmentCount, 1);
+  assert.deepEqual(response.result.safety, {
+    canSendEmail: false,
+    canSaveQuote: false,
+    canCallXero: false,
+    canActivate: false
+  });
+
+  const packet = JSON.parse(fs.readFileSync(response.result.handoffPath, 'utf8'));
+  assert.equal(packet.candidateQuoteDraft.items.length, 0);
+  assert.equal(packet.safety.canSendEmail, false);
+  assert.equal(packet.safety.canSaveQuote, false);
+});
+
+test('create-quote-handoff downloads attachments when manifest is metadata-only', async () => {
+  const requestId = 'quote-handoff-download';
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mail-reader-handoff-download-'));
+  const inboxDir = path.join(root, 'prestigio', 'quote-intake-handoffs', 'inbox');
+  const rootDir = path.join(root, 'prestigio', 'quote-intake-handoffs');
+  const attachmentPath = path.join(root, 'sectional.pdf');
+  fs.writeFileSync(attachmentPath, '%PDF-1.4 fake');
+
+  await helpers.processActionRequest({
+    action: 'create-quote-handoff',
+    requestId,
+    messageId: 'message-quote-download',
+    mailbox: 'chris@prestigiocustom.com',
+    mailboxKey: 'chris',
+    createdAt: '2026-05-16T12:05:00.000Z',
+    threadDetail: {
+      conversationId: 'conversation-quote-download',
+      subject: 'Tigertail // Family Patio Sectional',
+      messages: [
+        {
+          id: 'message-quote-download',
+          subject: 'Tigertail // Family Patio Sectional',
+          from: 'Designer <designer@example.com>',
+          to: ['chris@prestigiocustom.com'],
+          cc: [],
+          date: '2026-05-16T12:00:00.000Z',
+          body: 'Can you quote replacement cushions from this drawing?',
+          hasAttachments: true
+        }
+      ]
+    },
+    attachmentManifest: [
+      {
+        filename: 'sectional.pdf',
+        contentType: 'application/pdf',
+        size: 1000,
+        capture: 'metadata_only'
+      }
+    ]
+  }, {
+    requestId,
+    legacy: false,
+    actionHandlers: {
+      'create-quote-handoff': async (request) => ({
+        responseResult: await helpers.createQuoteHandoffFromRequest(request, {
+          inboxDir,
+          rootDir,
+          downloadMessageAttachments: async () => ({
+            messageId: 'message-quote-download',
+            attachments: [
+              {
+                originalName: 'sectional.pdf',
+                name: 'sectional.pdf',
+                path: attachmentPath,
+                contentType: 'application/pdf',
+                size: 14,
+                sha256: 'abc123',
+                source: 'attachment'
+              }
+            ],
+            skipped: []
+          })
+        })
+      })
+    }
+  });
+
+  const response = JSON.parse(fs.readFileSync(helpers.actionResponsePathForRequest(requestId), 'utf8'));
+  assert.equal(response.success, true);
+  const packet = JSON.parse(fs.readFileSync(response.result.handoffPath, 'utf8'));
+  assert.equal(packet.attachmentManifest.length, 1);
+  assert.equal(packet.attachmentManifest[0].path, attachmentPath);
+  assert.equal(packet.attachmentManifest[0].capture, 'path_reference');
+});
+
 test('createReplyDraft uses reply-all semantics and preserves provider recipients', async () => {
   const calls = [];
   const result = await helpers.createReplyDraftWithDeps(
@@ -392,6 +541,98 @@ test('downloadMessageAttachments saves inline image attachments and data URI ima
   assert.equal(result.attachments[1].source, 'body_data_uri');
   assert.equal(fs.existsSync(result.attachments[0].path), true);
   assert.equal(fs.existsSync(result.attachments[1].path), true);
+});
+
+test('downloadMessageAttachments recovers inline application/octet-stream images by sniffing bytes', async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mail-inline-octet-'));
+  const tinyPng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=', 'base64');
+  const result = await helpers.downloadMessageAttachments('farley-inline-message', {
+    outputDir,
+    callGraph: async (endpoint) => {
+      if (endpoint.includes('/attachments?$select=')) {
+        return {
+          value: [
+            {
+              id: 'inline-png',
+              name: 'room-photo.png',
+              contentType: 'image/png',
+              size: tinyPng.length,
+              isInline: true,
+              contentId: 'room-photo'
+            },
+            {
+              id: 'inline-octet',
+              name: 'image002',
+              contentType: 'application/octet-stream',
+              size: tinyPng.length,
+              isInline: true,
+              contentId: 'farley-plan'
+            }
+          ]
+        };
+      }
+      if (endpoint.includes('/messages/farley-inline-message?$select=body')) {
+        return {
+          body: {
+            content: '<html><body><img src="cid:room-photo"><img src="cid:farley-plan"></body></html>'
+          }
+        };
+      }
+      if (endpoint.endsWith('/attachments/inline-png')) {
+        return {
+          '@odata.type': '#microsoft.graph.fileAttachment',
+          contentId: 'room-photo',
+          contentBytes: tinyPng.toString('base64')
+        };
+      }
+      if (endpoint.endsWith('/attachments/inline-octet')) {
+        return {
+          '@odata.type': '#microsoft.graph.fileAttachment',
+          contentId: 'farley-plan',
+          contentBytes: tinyPng.toString('base64')
+        };
+      }
+      throw new Error('Unexpected Graph call: ' + endpoint);
+    }
+  });
+
+  assert.equal(result.attachments.length, 2);
+  assert.equal(result.skipped.length, 0);
+  assert.equal(result.attachments[1].name, 'image002.png');
+  assert.equal(result.attachments[1].contentType, 'image/png');
+  assert.equal(result.attachments[1].originalContentType, 'application/octet-stream');
+  assert.equal(result.attachments[1].detectedContentType, 'image/png');
+  assert.equal(result.attachments[1].detectionSource, 'magic_bytes');
+  assert.equal(result.attachments[1].contentId, 'farley-plan');
+  assert.equal(result.attachments[1].referencedBy, 'cid:farley-plan');
+  assert.equal(result.attachments[1].source, 'inline_attachment');
+  assert.equal(fs.existsSync(result.attachments[1].path), true);
+});
+
+test('downloadMessageAttachments marks missing cid image references as blockers', async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mail-inline-missing-'));
+  const result = await helpers.downloadMessageAttachments('missing-inline-message', {
+    outputDir,
+    callGraph: async (endpoint) => {
+      if (endpoint.includes('/attachments?$select=')) {
+        return { value: [] };
+      }
+      if (endpoint.includes('/messages/missing-inline-message?$select=body')) {
+        return {
+          body: {
+            content: '<html><body><img src="cid:missing-plan"></body></html>'
+          }
+        };
+      }
+      throw new Error('Unexpected Graph call: ' + endpoint);
+    }
+  });
+
+  assert.equal(result.attachments.length, 0);
+  assert.equal(result.skipped.length, 1);
+  assert.equal(result.skipped[0].reason, 'inline_image_not_found');
+  assert.equal(result.skipped[0].expectedInlineImage, true);
+  assert.equal(result.skipped[0].contentId, 'missing-plan');
 });
 
 test('sanitizeFileName prevents path traversal names', () => {

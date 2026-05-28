@@ -21,8 +21,8 @@ const INTERNAL_EMAILS = [
 const formatterCache = new Map();
 
 const ACTION_SUPPORT = {
-  microsoft: new Set(['draft', 'reply', 'fetch_thread', 'fetch_thread_by_subject', 'lookup_history', 'download_attachments']),
-  gmail: new Set(['draft', 'lookup_history'])
+  microsoft: new Set(['draft', 'reply', 'fetch_thread', 'fetch_thread_by_subject', 'lookup_history', 'download_attachments', 'create_quote_handoff']),
+  gmail: new Set(['draft', 'lookup_history', 'create_quote_handoff'])
 };
 
 let requestCounter = 0;
@@ -80,6 +80,10 @@ function normalizeAction(action) {
     case 'mailbox_history':
     case 'mailbox-history':
       return 'lookup_history';
+    case 'create-quote-handoff':
+    case 'quote_handoff':
+    case 'quote-handoff':
+      return 'create_quote_handoff';
     default:
       return raw;
   }
@@ -91,6 +95,8 @@ function serviceActionName(action) {
       return 'fetch-thread';
     case 'fetch_thread_by_subject':
       return 'fetch-thread-by-subject';
+    case 'create_quote_handoff':
+      return 'create-quote-handoff';
     default:
       return normalizeAction(action);
   }
@@ -569,6 +575,27 @@ function normalizeAttachmentDownloadResult(response, mailbox) {
   };
 }
 
+function normalizeQuoteHandoffResult(response) {
+  var raw = response && response.result && typeof response.result === 'object'
+    ? response.result
+    : {};
+  return {
+    schema_version: raw.schemaVersion || null,
+    source_key: raw.sourceKey || raw.source_key || null,
+    handoff_path: raw.handoffPath || raw.handoff_path || null,
+    created: raw.created === true,
+    queue: raw.queue || null,
+    source_provider: raw.sourceProvider || raw.source_provider || null,
+    mailbox: raw.mailbox || null,
+    message_id: raw.messageId || raw.message_id || null,
+    thread_id: raw.threadId || raw.thread_id || null,
+    subject: raw.subject || null,
+    attachment_count: Number(raw.attachmentCount || raw.attachment_count || 0),
+    attachment_capture: raw.attachmentCapture || raw.attachment_capture || null,
+    safety: raw.safety || null
+  };
+}
+
 function normalizeThreadResult(response, detail, options = {}) {
   const presentationTimeZone = options.presentationTimeZone || DEFAULT_PRESENTATION_TIMEZONE;
   if (response?.result?.ambiguous || detail?.ambiguous) {
@@ -617,6 +644,10 @@ function buildSuccessSummary(action, mailbox, normalizedResult, provenance) {
 
   if (action === 'download_attachments') {
     return `Downloaded ${normalizedResult.attachment_count || 0} attachment(s) from ${mailbox.address}.`;
+  }
+
+  if (action === 'create_quote_handoff') {
+    return `${normalizedResult.created ? 'Created' : 'Reused'} quote handoff packet for "${normalizedResult.subject || '(no subject)'}" from ${mailbox.address}.`;
   }
 
   return `Completed ${action} for ${mailbox.address}.`;
@@ -878,7 +909,9 @@ async function executeActionRequest(input, options = {}) {
     ? normalizeDraftResult(action, request, polled.actionResponse, mailbox)
     : action === 'download_attachments'
       ? normalizeAttachmentDownloadResult(polled.actionResponse, mailbox)
-      : normalizeThreadResult(polled.actionResponse, polled.threadDetail, { presentationTimeZone });
+      : action === 'create_quote_handoff'
+        ? normalizeQuoteHandoffResult(polled.actionResponse, mailbox)
+        : normalizeThreadResult(polled.actionResponse, polled.threadDetail, { presentationTimeZone });
 
   if ((action === 'fetch_thread' || action === 'fetch_thread_by_subject') && normalizedResult.ambiguous) {
     const error = createError(

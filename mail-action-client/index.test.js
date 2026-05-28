@@ -830,6 +830,107 @@ test('Gmail attachment download is blocked until implemented', async () => {
   assert.equal(result.error.code, 'unsupported_action');
 });
 
+test('Microsoft quote handoff returns normalized queue metadata', async () => {
+  const { mailboxes } = createMailboxes();
+  const stop = startMailboxResponder(mailboxes.chris, async (request) => ({
+    actionResponse: {
+      success: true,
+      requestId: request.requestId,
+      requestedAt: request.requested_at,
+      completedAt: shortlyAfter(request.requested_at),
+      provider: 'microsoft',
+      mailbox: mailboxes.chris.address,
+      result: {
+        schemaVersion: 'quote_request_mailroom_handoff.v0',
+        sourceKey: 'mailroom:microsoft:chris:thread-1:message-1',
+        handoffPath: '/Users/chrisreyes/.openclaw/workspace/prestigio/quote-intake-handoffs/inbox/thread-1.json',
+        created: true,
+        queue: 'prestigio/quote-intake-handoffs/inbox',
+        sourceProvider: 'microsoft',
+        mailbox: mailboxes.chris.address,
+        messageId: request.messageId,
+        threadId: 'thread-1',
+        subject: 'Quote request',
+        attachmentCount: 1,
+        safety: {
+          canSendEmail: false,
+          canSaveQuote: false,
+          canCallXero: false,
+          canActivate: false
+        }
+      }
+    }
+  }));
+
+  try {
+    const result = await executeMailAction({
+      action: 'create_quote_handoff',
+      mailbox: 'chris',
+      messageId: 'message-1'
+    }, { mailboxes });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.action, 'create_quote_handoff');
+    assert.equal(result.result.source_key, 'mailroom:microsoft:chris:thread-1:message-1');
+    assert.equal(result.result.created, true);
+    assert.equal(result.result.attachment_count, 1);
+    assert.equal(result.result.safety.canSendEmail, false);
+    assert.match(result.summary, /Created quote handoff packet/i);
+  } finally {
+    stop();
+  }
+});
+
+test('Gmail quote handoff is supported as metadata-only queue handoff', async () => {
+  const { mailboxes } = createMailboxes();
+  const stop = startMailboxResponder(mailboxes.gmail, async (request) => ({
+    actionResponse: {
+      success: true,
+      requestId: request.requestId,
+      requestedAt: request.requested_at,
+      completedAt: shortlyAfter(request.requested_at),
+      provider: 'gmail',
+      mailbox: mailboxes.gmail.address,
+      result: {
+        schemaVersion: 'quote_request_mailroom_handoff.v0',
+        sourceKey: 'mailroom:gmail:gmail:thread-2:message-2',
+        handoffPath: '/Users/chrisreyes/.openclaw/workspace/prestigio/quote-intake-handoffs/inbox/thread-2.json',
+        created: true,
+        queue: 'prestigio/quote-intake-handoffs/inbox',
+        sourceProvider: 'gmail',
+        mailbox: mailboxes.gmail.address,
+        messageId: request.messageId,
+        threadId: 'thread-2',
+        subject: 'Quote request',
+        attachmentCount: 0,
+        attachmentCapture: 'metadata_only',
+        safety: {
+          canSendEmail: false,
+          canSaveQuote: false,
+          canCallXero: false,
+          canActivate: false
+        }
+      }
+    }
+  }));
+
+  try {
+    const result = await executeMailAction({
+      action: 'create-quote-handoff',
+      mailbox: 'gmail',
+      messageId: 'message-2'
+    }, { mailboxes });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.provider, 'gmail');
+    assert.equal(result.result.source_provider, 'gmail');
+    assert.equal(result.result.attachment_capture, 'metadata_only');
+    assert.match(result.summary, /quote handoff packet/i);
+  } finally {
+    stop();
+  }
+});
+
 test('end-to-end provenance survives through helper draft results', async () => {
   const { mailboxes } = createMailboxes();
   const resolution = sampleResolution({

@@ -2,6 +2,7 @@ var express = require('express');
 var crypto = require('crypto');
 var fs = require('fs');
 var path = require('path');
+var quoteHandoff = require('../quote-intake/handoff');
 var readinessShadow;
 try {
   readinessShadow = require('./readiness-shadow.cjs');
@@ -25,6 +26,9 @@ var LEGACY_THREAD_DETAIL_FILE = path.join(OUTPUT_DIR, 'thread-detail.json');
 var ACTION_REQUEST_DIR = path.join(OUTPUT_DIR, 'action-requests');
 var ACTION_RESPONSE_DIR = path.join(OUTPUT_DIR, 'action-responses');
 var THREAD_DETAIL_DIR = path.join(OUTPUT_DIR, 'thread-details');
+var WORKSPACE_DIR = process.env.OPENCLAW_WORKSPACE_DIR || path.dirname(OUTPUT_DIR);
+var QUOTE_HANDOFF_ROOT_DIR = path.join(WORKSPACE_DIR, 'prestigio', 'quote-intake-handoffs');
+var QUOTE_HANDOFF_INBOX_DIR = path.join(QUOTE_HANDOFF_ROOT_DIR, 'inbox');
 var ACTION_POLL_INTERVAL_MS = 1000;
 var ACTION_REQUEST_STABILITY_MS = 250;
 var ACTION_FILE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -38,7 +42,15 @@ var ALLOWED_ATTACHMENT_CONTENT_TYPES = [
   'image/jpg'
 ];
 var ALLOWED_ATTACHMENT_EXTENSIONS = ['.pdf', '.png', '.jpg', '.jpeg'];
+var IMAGE_ATTACHMENT_EXTENSIONS = ['.png', '.jpg', '.jpeg'];
+var GENERIC_BINARY_CONTENT_TYPES = [
+  'application/octet-stream',
+  'application/binary',
+  'binary/octet-stream',
+  'application/x-binary'
+];
 var DATA_IMAGE_RE = /<img\b[^>]*\bsrc\s*=\s*["']data:(image\/(?:png|jpe?g));base64,([^"']+)["'][^>]*>/gi;
+var CID_IMAGE_RE = /<img\b[^>]*\bsrc\s*=\s*(?:"cid:([^"]+)"|'cid:([^']+)'|cid:([^\s>]+))/gi;
 
 // ============================================================
 // FORWARD WHITELIST — security boundary for forwarding
@@ -690,10 +702,101 @@ function ensureUniqueFilePath(dir, fileName) {
 }
 
 function isAllowedAttachment(attachment) {
-  var contentType = String(attachment.contentType || '').toLowerCase();
+  var contentType = normalizeContentType(attachment.contentType);
   var extension = path.extname(String(attachment.name || '')).toLowerCase();
   return ALLOWED_ATTACHMENT_CONTENT_TYPES.indexOf(contentType) !== -1 ||
     ALLOWED_ATTACHMENT_EXTENSIONS.indexOf(extension) !== -1;
+}
+
+function normalizeContentType(contentType) {
+  return String(contentType || '').split(';')[0].trim().toLowerCase();
+}
+
+function isGenericBinaryContentType(contentType) {
+  return GENERIC_BINARY_CONTENT_TYPES.indexOf(normalizeContentType(contentType)) !== -1;
+}
+
+function hasImageAttachmentExtension(name) {
+  return IMAGE_ATTACHMENT_EXTENSIONS.indexOf(path.extname(String(name || '')).toLowerCase()) !== -1;
+}
+
+function decodeHtmlAttribute(value) {
+  return String(value || '')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'");
+}
+
+function normalizeContentId(value) {
+  var raw = decodeHtmlAttribute(value).trim();
+  if (!raw) return null;
+  raw = raw.replace(/^cid:/i, '').trim();
+  raw = raw.replace(/^<+/, '').replace(/>+$/, '').trim();
+  try {
+    raw = decodeURIComponent(raw);
+  } catch (_) {
+    // Some Content-IDs contain raw percent signs; keep the original token.
+  }
+  return raw ? raw.toLowerCase() : null;
+}
+
+function collectInlineImageContentIds(html) {
+  var refs = {};
+  var match;
+  CID_IMAGE_RE.lastIndex = 0;
+  while ((match = CID_IMAGE_RE.exec(String(html || ''))) !== null) {
+    var raw = match[1] || match[2] || match[3] || '';
+    var normalized = normalizeContentId(raw);
+    if (normalized) {
+      refs[normalized] = decodeHtmlAttribute(raw).trim();
+    }
+  }
+  return refs;
+}
+
+function hasInlineImageReference(refs, contentId) {
+  var normalized = normalizeContentId(contentId);
+  return Boolean(normalized && Object.prototype.hasOwnProperty.call(refs || {}, normalized));
+}
+
+function inlineImageReferenceLabel(refs, contentId) {
+  var normalized = normalizeContentId(contentId);
+  if (!normalized || !refs || !Object.prototype.hasOwnProperty.call(refs, normalized)) return null;
+  return 'cid:' + refs[normalized];
+}
+
+function shouldAttemptBinaryAttachmentSniff(attachment, refs) {
+  var contentType = normalizeContentType(attachment && attachment.contentType);
+  if (contentType && !isGenericBinaryContentType(contentType)) return false;
+  return attachment.isInline === true ||
+    hasImageAttachmentExtension(attachment && attachment.name) ||
+    hasInlineImageReference(refs, attachment && attachment.contentId);
+}
+
+function sniffAttachmentContentType(buffer) {
+  if (!Buffer.isBuffer(buffer)) return null;
+  if (
+    buffer.length >= 8 &&
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47 &&
+    buffer[4] === 0x0d &&
+    buffer[5] === 0x0a &&
+    buffer[6] === 0x1a &&
+    buffer[7] === 0x0a
+  ) {
+    return 'image/png';
+  }
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return 'image/jpeg';
+  }
+  if (buffer.length >= 5 && buffer.slice(0, 5).toString('ascii') === '%PDF-') {
+    return 'application/pdf';
+  }
+  return null;
 }
 
 function fileSha256(buffer) {
@@ -701,7 +804,7 @@ function fileSha256(buffer) {
 }
 
 function extensionForContentType(contentType) {
-  var normalized = String(contentType || '').toLowerCase();
+  var normalized = normalizeContentType(contentType);
   if (normalized === 'image/png') return '.png';
   if (normalized === 'image/jpeg' || normalized === 'image/jpg') return '.jpg';
   if (normalized === 'application/pdf') return '.pdf';
@@ -716,11 +819,11 @@ function saveDownloadedAttachment(params) {
   }
   var filePath = ensureUniqueFilePath(params.outputDir, fileName);
   fs.writeFileSync(filePath, params.buffer, { mode: 0o600 });
-  return {
+  var saved = {
     id: params.id || null,
     name: path.basename(filePath),
     originalName: params.originalName || params.name || null,
-    contentType: String(params.contentType || '').toLowerCase() || null,
+    contentType: normalizeContentType(params.contentType) || null,
     size: params.buffer.length,
     sha256: fileSha256(params.buffer),
     path: filePath,
@@ -728,19 +831,34 @@ function saveDownloadedAttachment(params) {
     contentId: params.contentId || null,
     source: params.source || 'attachment'
   };
+  var originalContentType = normalizeContentType(params.originalContentType);
+  var detectedContentType = normalizeContentType(params.detectedContentType);
+  if (originalContentType && originalContentType !== saved.contentType) {
+    saved.originalContentType = originalContentType;
+  }
+  if (detectedContentType) {
+    saved.detectedContentType = detectedContentType;
+  }
+  if (params.detectionSource) {
+    saved.detectionSource = params.detectionSource;
+  }
+  if (params.referencedBy) {
+    saved.referencedBy = params.referencedBy;
+  }
+  return saved;
 }
 
-async function downloadDataUriImagesFromBody(messageId, outputDir, totalBytes, graph) {
-  var downloaded = [];
-  var skipped = [];
-  var message;
+async function fetchMessageBodyForInlineImages(messageId, graph) {
   try {
-    message = await graph(
+    var message = await graph(
       '/users/' + MAILBOX + '/messages/' + encodeURIComponent(messageId) + '?$select=body'
     );
+    return {
+      body: message && message.body && message.body.content ? String(message.body.content) : '',
+      skipped: []
+    };
   } catch (err) {
     return {
-      downloaded: downloaded,
       skipped: [{
         id: null,
         name: null,
@@ -749,11 +867,14 @@ async function downloadDataUriImagesFromBody(messageId, outputDir, totalBytes, g
         reason: 'body_fetch_failed',
         detail: err.message
       }],
-      totalBytes: totalBytes
+      body: ''
     };
   }
+}
 
-  var body = message && message.body && message.body.content ? String(message.body.content) : '';
+function downloadDataUriImagesFromBodyContent(body, outputDir, totalBytes) {
+  var downloaded = [];
+  var skipped = [];
   var match;
   var index = 1;
   DATA_IMAGE_RE.lastIndex = 0;
@@ -969,6 +1090,24 @@ function normalizeActionName(action) {
   return value.replace(/_/g, '-');
 }
 
+function buildSkippedAttachment(params) {
+  var skipped = {
+    id: params.id || null,
+    name: params.name || null,
+    contentType: normalizeContentType(params.contentType) || null,
+    size: params.size || null,
+    reason: params.reason
+  };
+  if (params.contentId) skipped.contentId = params.contentId;
+  if (params.originalContentType) skipped.originalContentType = normalizeContentType(params.originalContentType);
+  if (params.detectedContentType) skipped.detectedContentType = normalizeContentType(params.detectedContentType);
+  if (params.isInline === true) skipped.isInline = true;
+  if (params.expectedInlineImage === true) skipped.expectedInlineImage = true;
+  if (params.referencedBy) skipped.referencedBy = params.referencedBy;
+  if (params.detail) skipped.detail = params.detail;
+  return skipped;
+}
+
 async function downloadMessageAttachments(messageId, options) {
   var id = String(messageId || '').trim();
   if (!id) {
@@ -981,12 +1120,16 @@ async function downloadMessageAttachments(messageId, options) {
   var safeMessageId = sanitizeRequestId(id, 'message');
   var outputDir = path.join(outputRoot, safeMessageId);
   var attachmentList = await graph(
-    '/users/' + MAILBOX + '/messages/' + encodeURIComponent(id) + '/attachments?$select=id,name,contentType,size,isInline'
+    '/users/' + MAILBOX + '/messages/' + encodeURIComponent(id) + '/attachments?$select=id,name,contentType,size,isInline,contentId'
   );
   var attachments = Array.isArray(attachmentList.value) ? attachmentList.value : [];
   var downloaded = [];
   var skipped = [];
   var totalBytes = 0;
+  var bodyFetch = await fetchMessageBodyForInlineImages(id, graph);
+  var inlineImageRefs = collectInlineImageContentIds(bodyFetch.body);
+  var recoveredInlineContentIds = {};
+  var skippedInlineContentIds = {};
 
   fs.mkdirSync(outputDir, { recursive: true });
 
@@ -995,12 +1138,17 @@ async function downloadMessageAttachments(messageId, options) {
     var attachmentId = attachment.id;
     var name = sanitizeFileName(attachment.name, 'attachment-' + (i + 1));
     var size = Number(attachment.size || 0);
-    var contentType = String(attachment.contentType || '').toLowerCase();
+    var contentType = normalizeContentType(attachment.contentType);
+    var contentId = attachment.contentId || null;
+    var normalizedContentId = normalizeContentId(contentId);
+    var expectsInlineImage = hasInlineImageReference(inlineImageRefs, contentId);
+    var referencedBy = inlineImageReferenceLabel(inlineImageRefs, contentId);
+    var shouldSniffBinary = shouldAttemptBinaryAttachmentSniff(attachment, inlineImageRefs);
     var reason = null;
 
     if (!attachmentId) {
       reason = 'missing_attachment_id';
-    } else if (!isAllowedAttachment(attachment)) {
+    } else if (!isAllowedAttachment(attachment) && !shouldSniffBinary) {
       reason = 'unsupported_content_type';
     } else if (size > MAX_ATTACHMENT_BYTES) {
       reason = 'attachment_too_large';
@@ -1009,27 +1157,45 @@ async function downloadMessageAttachments(messageId, options) {
     }
 
     if (reason) {
-      skipped.push({
+      if (expectsInlineImage && normalizedContentId) {
+        skippedInlineContentIds[normalizedContentId] = true;
+      }
+      skipped.push(buildSkippedAttachment({
         id: attachmentId || null,
         name: name,
         contentType: contentType || null,
         size: size || null,
-        reason: reason
-      });
+        reason: reason,
+        contentId: contentId,
+        isInline: attachment.isInline === true,
+        expectedInlineImage: expectsInlineImage,
+        referencedBy: referencedBy
+      }));
       continue;
     }
 
     var detail = await graph(
       '/users/' + MAILBOX + '/messages/' + encodeURIComponent(id) + '/attachments/' + encodeURIComponent(attachmentId)
     );
+    contentId = detail.contentId || attachment.contentId || null;
+    normalizedContentId = normalizeContentId(contentId);
+    expectsInlineImage = hasInlineImageReference(inlineImageRefs, contentId);
+    referencedBy = inlineImageReferenceLabel(inlineImageRefs, contentId);
     if (detail['@odata.type'] && detail['@odata.type'] !== '#microsoft.graph.fileAttachment') {
-      skipped.push({
+      if (expectsInlineImage && normalizedContentId) {
+        skippedInlineContentIds[normalizedContentId] = true;
+      }
+      skipped.push(buildSkippedAttachment({
         id: attachmentId,
         name: name,
         contentType: contentType || null,
         size: size || null,
-        reason: 'not_file_attachment'
-      });
+        reason: 'not_file_attachment',
+        contentId: contentId,
+        isInline: attachment.isInline === true,
+        expectedInlineImage: expectsInlineImage,
+        referencedBy: referencedBy
+      }));
       continue;
     }
 
@@ -1044,33 +1210,117 @@ async function downloadMessageAttachments(messageId, options) {
     }
 
     if (buffer.length > MAX_ATTACHMENT_BYTES || totalBytes + buffer.length > MAX_MESSAGE_ATTACHMENT_BYTES) {
-      skipped.push({
+      if (expectsInlineImage && normalizedContentId) {
+        skippedInlineContentIds[normalizedContentId] = true;
+      }
+      skipped.push(buildSkippedAttachment({
         id: attachmentId,
         name: name,
         contentType: contentType || null,
         size: buffer.length,
-        reason: 'downloaded_size_limit'
-      });
+        reason: 'downloaded_size_limit',
+        contentId: contentId,
+        isInline: attachment.isInline === true,
+        expectedInlineImage: expectsInlineImage,
+        referencedBy: referencedBy
+      }));
+      continue;
+    }
+
+    var detailContentType = normalizeContentType(detail.contentType);
+    var originalContentType = contentType || detailContentType || null;
+    var effectiveContentType = detailContentType && !isGenericBinaryContentType(detailContentType)
+      ? detailContentType
+      : contentType;
+    var detectedContentType = null;
+    var detectionSource = null;
+    if (!effectiveContentType || isGenericBinaryContentType(effectiveContentType)) {
+      detectedContentType = sniffAttachmentContentType(buffer);
+      if (detectedContentType) {
+        effectiveContentType = detectedContentType;
+        detectionSource = 'magic_bytes';
+      } else {
+        if (expectsInlineImage && normalizedContentId) {
+          skippedInlineContentIds[normalizedContentId] = true;
+        }
+        skipped.push(buildSkippedAttachment({
+          id: attachmentId,
+          name: name,
+          contentType: contentType || null,
+          originalContentType: originalContentType,
+          size: buffer.length,
+          reason: expectsInlineImage ? 'inline_image_recovery_failed' : 'unsupported_sniffed_content_type',
+          contentId: contentId,
+          isInline: attachment.isInline === true,
+          expectedInlineImage: expectsInlineImage,
+          referencedBy: referencedBy,
+          detail: 'Attachment bytes did not match allowed PDF, PNG, or JPEG signatures.'
+        }));
+        continue;
+      }
+    }
+
+    if (!isAllowedAttachment({ contentType: effectiveContentType, name: name })) {
+      if (expectsInlineImage && normalizedContentId) {
+        skippedInlineContentIds[normalizedContentId] = true;
+      }
+      skipped.push(buildSkippedAttachment({
+        id: attachmentId,
+        name: name,
+        contentType: effectiveContentType || contentType || null,
+        originalContentType: originalContentType,
+        detectedContentType: detectedContentType,
+        size: buffer.length,
+        reason: expectsInlineImage ? 'inline_image_recovery_failed' : 'unsupported_content_type',
+        contentId: contentId,
+        isInline: attachment.isInline === true,
+        expectedInlineImage: expectsInlineImage,
+        referencedBy: referencedBy
+      }));
       continue;
     }
 
     totalBytes += buffer.length;
-    downloaded.push(saveDownloadedAttachment({
+    var savedAttachment = saveDownloadedAttachment({
       id: attachmentId,
       name: name,
       originalName: attachment.name || null,
-      contentType: contentType || null,
+      contentType: effectiveContentType || null,
+      originalContentType: originalContentType,
+      detectedContentType: detectedContentType,
+      detectionSource: detectionSource,
       buffer: buffer,
       outputDir: outputDir,
       isInline: attachment.isInline === true,
-      contentId: detail.contentId || attachment.contentId || null,
+      contentId: contentId,
+      referencedBy: referencedBy,
       source: attachment.isInline ? 'inline_attachment' : 'attachment'
-    }));
+    });
+    downloaded.push(savedAttachment);
+    if ((savedAttachment.isInline || expectsInlineImage) && normalizedContentId) {
+      recoveredInlineContentIds[normalizedContentId] = true;
+    }
   }
 
-  var bodyImages = await downloadDataUriImagesFromBody(id, outputDir, totalBytes, graph);
+  Object.keys(inlineImageRefs).forEach(function(contentIdKey) {
+    if (!recoveredInlineContentIds[contentIdKey] && !skippedInlineContentIds[contentIdKey]) {
+      skipped.push(buildSkippedAttachment({
+        id: null,
+        name: null,
+        contentType: null,
+        size: null,
+        reason: 'inline_image_not_found',
+        contentId: inlineImageRefs[contentIdKey],
+        expectedInlineImage: true,
+        referencedBy: 'cid:' + inlineImageRefs[contentIdKey],
+        detail: 'HTML referenced an inline image Content-ID that was not present in the attachment list.'
+      }));
+    }
+  });
+
+  var bodyImages = downloadDataUriImagesFromBodyContent(bodyFetch.body, outputDir, totalBytes);
   downloaded = downloaded.concat(bodyImages.downloaded);
-  skipped = skipped.concat(bodyImages.skipped);
+  skipped = skipped.concat(bodyFetch.skipped).concat(bodyImages.skipped);
   totalBytes = bodyImages.totalBytes;
 
   return {
@@ -1080,6 +1330,113 @@ async function downloadMessageAttachments(messageId, options) {
     attachments: downloaded,
     skipped: skipped,
     downloadedAt: new Date().toISOString()
+  };
+}
+
+function quoteHandoffDate(request) {
+  if (!request || !request.createdAt) return undefined;
+  var date = new Date(request.createdAt);
+  return Number.isFinite(date.getTime()) ? date : undefined;
+}
+
+function newestAttachmentMessageFromThread(threadDetail) {
+  var messages = threadDetail && Array.isArray(threadDetail.messages) ? threadDetail.messages : [];
+  var withAttachments = messages.filter(function(message) {
+    return message && (message.hasAttachments === true || message.has_attachments === true);
+  });
+  if (!withAttachments.length) return null;
+  return withAttachments[withAttachments.length - 1];
+}
+
+async function resolveHandoffAttachmentManifest(request, threadDetail, options) {
+  var explicit = []
+    .concat(Array.isArray(request.attachments) ? request.attachments : [])
+    .concat(Array.isArray(request.attachmentManifest) ? request.attachmentManifest : []);
+
+  var hasPath = explicit.some(function(item) {
+    return item && item.path;
+  });
+  if (hasPath) return explicit;
+  if (request.downloadAttachments === false) return explicit;
+
+  var messageId = request.messageId;
+  if (!messageId && threadDetail) {
+    var newest = newestAttachmentMessageFromThread(threadDetail);
+    messageId = newest && newest.id;
+  }
+  if (!messageId) return explicit;
+
+  var downloadFn = options && options.downloadMessageAttachments
+    ? options.downloadMessageAttachments
+    : downloadMessageAttachments;
+  var download = await downloadFn(messageId, options);
+  return (download.attachments || []).map(function(attachment) {
+    var manifestItem = {
+      filename: attachment.originalName || attachment.name,
+      path: attachment.path,
+      contentType: attachment.contentType,
+      size: attachment.size,
+      sha256: attachment.sha256,
+      capture: 'path_reference',
+      source: attachment.source || 'download_attachments',
+      messageId: messageId
+    };
+    if (attachment.id) manifestItem.attachmentId = attachment.id;
+    if (attachment.contentId) manifestItem.contentId = attachment.contentId;
+    if (attachment.originalName) manifestItem.originalName = attachment.originalName;
+    if (attachment.originalContentType) manifestItem.originalContentType = attachment.originalContentType;
+    if (attachment.detectedContentType) manifestItem.detectedContentType = attachment.detectedContentType;
+    if (attachment.referencedBy) manifestItem.referencedBy = attachment.referencedBy;
+    return manifestItem;
+  });
+}
+
+async function createQuoteHandoffFromRequest(request, options) {
+  var threadDetail = request.threadDetail;
+  if (!threadDetail) {
+    if (!request.messageId) {
+      throw new Error('create-quote-handoff requires messageId or threadDetail');
+    }
+    threadDetail = await fetchThread(request.messageId);
+  }
+
+  var attachments = await resolveHandoffAttachmentManifest(request, threadDetail, options || {});
+
+  var inboxDir = (options && options.inboxDir) || QUOTE_HANDOFF_INBOX_DIR;
+  var rootDir = (options && options.rootDir) || QUOTE_HANDOFF_ROOT_DIR;
+  var created = quoteHandoff.createQuoteHandoff({
+    provider: 'microsoft',
+    mailbox: request.mailbox || MAILBOX,
+    mailboxKey: request.mailboxKey,
+    messageId: request.messageId,
+    sourcePacket: request.sourcePacket,
+    threadDetail: threadDetail,
+    attachments: attachments,
+    mailroomTask: request.mailroomTask,
+    todoistTaskId: request.todoistTaskId,
+    knownFacts: request.knownFacts,
+    assumptions: request.assumptions,
+    requestId: request.quoteRequestId || request.requestId,
+    createdAt: request.createdAt
+  }, {
+    inboxDir: inboxDir,
+    allowedRootDir: rootDir,
+    now: quoteHandoffDate(request)
+  });
+
+  return {
+    schemaVersion: quoteHandoff.HANDOFF_SCHEMA_VERSION,
+    sourceKey: created.sourceKey,
+    handoffPath: created.path,
+    created: created.created,
+    queue: 'prestigio/quote-intake-handoffs/inbox',
+    sourceProvider: 'microsoft',
+    mailbox: request.mailbox || MAILBOX,
+    messageId: created.packet.sourcePacket.messageId,
+    threadId: created.packet.sourcePacket.threadId,
+    subject: created.packet.sourcePacket.subject,
+    attachmentCount: created.packet.attachmentManifest.length,
+    safety: created.packet.safety
   };
 }
 
@@ -1140,6 +1497,9 @@ function createActionHandlers() {
     },
     'download-attachments': async function(request) {
       return { responseResult: await downloadMessageAttachments(request.messageId) };
+    },
+    'create-quote-handoff': async function(request) {
+      return { responseResult: await createQuoteHandoffFromRequest(request) };
     }
   };
 }
@@ -2016,6 +2376,7 @@ module.exports = {
     fetchThreadBySubject: fetchThreadBySubject,
     sanitizeFileName: sanitizeFileName,
     isAllowedAttachment: isAllowedAttachment,
-    downloadMessageAttachments: downloadMessageAttachments
+    downloadMessageAttachments: downloadMessageAttachments,
+    createQuoteHandoffFromRequest: createQuoteHandoffFromRequest
   }
 };

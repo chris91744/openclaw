@@ -135,3 +135,138 @@ test('buildQuoteIntake uses latest message for attachment download fallback', as
   assert.equal(result.attachments.attachments.length, 1);
   assert.equal(result.recommended_next_action, 'review_manually');
 });
+
+test('buildQuoteIntake surfaces unrecovered expected inline images as blockers', async () => {
+  const result = await intake.buildQuoteIntake({
+    thread: {
+      subject: 'FARLEY TRAIL // SECTIONAL',
+      conversation_id: 'conv-inline',
+      messages: [
+        {
+          id: 'msg-inline',
+          from: 'Designer <designer@example.com>',
+          to: ['chris@prestigiocustom.com'],
+          date_utc: '2026-05-20T20:00:00Z',
+          hasAttachments: true,
+          body: 'Please quote from the inline photos.'
+        }
+      ]
+    },
+    downloadResult: {
+      message_id: 'msg-inline',
+      attachment_count: 1,
+      total_bytes: 68,
+      output_dir: '/tmp/out',
+      attachments: [
+        {
+          id: 'inline-ok',
+          name: 'room-photo.png',
+          originalName: 'room-photo.png',
+          contentType: 'image/png',
+          contentId: 'room-photo',
+          source: 'inline_attachment',
+          path: '/tmp/out/room-photo.png',
+          size: 68,
+          sha256: 'abc'
+        }
+      ],
+      skipped: [
+        {
+          id: 'inline-missing',
+          name: 'image002',
+          contentType: 'application/octet-stream',
+          expectedInlineImage: true,
+          contentId: 'farley-plan',
+          referencedBy: 'cid:farley-plan',
+          reason: 'inline_image_recovery_failed',
+          detail: 'Attachment bytes did not match allowed signatures.'
+        }
+      ]
+    },
+    attachmentReview: {
+      summary: { attachment_count: 1, image_count: 1 },
+      attachments: [
+        {
+          name: 'room-photo.png',
+          path: '/tmp/out/room-photo.png',
+          kind: 'image',
+          size: 68,
+          sha256: 'abc',
+          image: { pixelWidth: 100, pixelHeight: 50 },
+          extracted_text_chars: 0,
+          rendered_pages: []
+        }
+      ]
+    }
+  });
+
+  assert.equal(result.blockers.length, 1);
+  assert.equal(result.blockers[0].content_id, 'farley-plan');
+  assert.equal(result.recommended_next_action, 'resolve_attachment_blockers');
+  assert.match(result.open_questions.join('\n'), /farley-plan/);
+  assert.match(result.review_prompt, /Blocking attachment issues/);
+  assert.equal(result.download.attachments[0].contentId, 'room-photo');
+});
+
+test('collectReferenceImagePaths includes image attachments and rendered PDF pages', () => {
+  const paths = intake.collectReferenceImagePaths({
+    attachments: [
+      {
+        name: 'photo.jpg',
+        path: '/tmp/photo.jpg',
+        rendered_pages: []
+      },
+      {
+        name: 'drawing.pdf',
+        path: '/tmp/drawing.pdf',
+        rendered_pages: [{ path: '/tmp/drawing-page-1.png' }]
+      },
+      {
+        name: 'notes.txt',
+        path: '/tmp/notes.txt',
+        rendered_pages: []
+      }
+    ]
+  });
+
+  assert.deepEqual(paths, ['/tmp/photo.jpg', '/tmp/drawing-page-1.png']);
+});
+
+test('applyReferenceImagesToPayload merges intake images onto draft items', () => {
+  const payload = {
+    items: [
+      {
+        category: 'seating',
+        item_name: 'CHAIR',
+        reference_image_paths: ['/tmp/existing.png']
+      }
+    ]
+  };
+  intake.applyReferenceImagesToPayload(payload, {
+    attachments: {
+      attachments: [
+        { path: '/tmp/photo.jpg', rendered_pages: [{ path: '/tmp/page-1.png' }] }
+      ]
+    }
+  });
+
+  assert.deepEqual(payload.items[0].reference_image_paths, [
+    '/tmp/existing.png',
+    '/tmp/photo.jpg',
+    '/tmp/page-1.png'
+  ]);
+});
+
+test('handoffIntakeRequest resolves mailbox and subject from handoff packet', () => {
+  const request = intake.handoffIntakeRequest({
+    sourcePacket: {
+      mailboxKey: 'chris',
+      subject: 'Cross / Bedroom 3 / Pair of Chairs',
+      messageId: 'message-123'
+    }
+  });
+
+  assert.equal(request.mailbox, 'chris');
+  assert.equal(request.subject, 'Cross / Bedroom 3 / Pair of Chairs');
+  assert.equal(request.messageId, 'message-123');
+});

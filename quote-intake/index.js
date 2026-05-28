@@ -224,8 +224,33 @@ function buildAttachmentFacts(attachmentReview) {
   };
 }
 
+function expectedInlineImageSkips(download) {
+  return (Array.isArray(download?.skipped) ? download.skipped : [])
+    .filter((skip) => skip?.expectedInlineImage === true ||
+      skip?.reason === 'inline_image_recovery_failed' ||
+      skip?.reason === 'inline_image_not_found');
+}
+
+function attachmentBlockers(download) {
+  return expectedInlineImageSkips(download).map((skip) => {
+    const label = skip.referencedBy || skip.contentId || skip.name || skip.id || 'inline image';
+    return {
+      code: 'expected_inline_image_unrecovered',
+      message: `Expected inline image could not be recovered: ${label}.`,
+      attachment_id: skip.id || null,
+      content_id: skip.contentId || null,
+      name: skip.name || null,
+      reason: skip.reason || null,
+      detail: skip.detail || null
+    };
+  });
+}
+
 function buildOpenQuestions(packet) {
   const questions = [];
+  (Array.isArray(packet.blockers) ? packet.blockers : []).forEach((blocker) => {
+    questions.push(blocker.message || 'Resolve blocked attachment recovery before quoting.');
+  });
   if (!packet.project) questions.push('Confirm the project name.');
   if (!packet.scope) questions.push('Confirm the quote scope.');
   if (!packet.contacts.length) questions.push('Confirm who should receive the quote or clarification request.');
@@ -239,9 +264,70 @@ function buildOpenQuestions(packet) {
   return questions;
 }
 
+const REFERENCE_IMAGE_RE = /\.(jpe?g|png|gif|webp)$/i;
+
+function collectReferenceImagePaths(attachmentFacts) {
+  const attachments = Array.isArray(attachmentFacts?.attachments) ? attachmentFacts.attachments : [];
+  const paths = [];
+  attachments.forEach((attachment) => {
+    const filePath = attachment?.path;
+    if (filePath && REFERENCE_IMAGE_RE.test(filePath)) {
+      paths.push(filePath);
+    }
+    (Array.isArray(attachment?.rendered_pages) ? attachment.rendered_pages : []).forEach((page) => {
+      const pagePath = page?.path;
+      if (pagePath && REFERENCE_IMAGE_RE.test(pagePath)) {
+        paths.push(pagePath);
+      }
+    });
+  });
+  return [...new Set(paths)];
+}
+
+function applyReferenceImagesToPayload(payload, intake, options = {}) {
+  if (!payload || typeof payload !== 'object' || !Array.isArray(payload.items) || !payload.items.length) {
+    return payload;
+  }
+  const paths = collectReferenceImagePaths(intake?.attachments);
+  if (!paths.length) return payload;
+
+  const attachToAllItems = options.attachToAllItems !== false && payload.items.length === 1;
+  payload.items = payload.items.map((item, index) => {
+    if (!attachToAllItems && index !== 0) return item;
+    const existing = Array.isArray(item?.reference_image_paths)
+      ? item.reference_image_paths
+      : Array.isArray(item?.referenceImagePaths)
+        ? item.referenceImagePaths
+        : [];
+    const merged = [...new Set([...existing.map(String), ...paths])];
+    if (!merged.length) return item;
+    return {
+      ...item,
+      reference_image_paths: merged
+    };
+  });
+  return payload;
+}
+
+function handoffIntakeRequest(handoff, overrides = {}) {
+  const packet = handoff && typeof handoff === 'object' ? handoff : {};
+  const source = packet.sourcePacket || {};
+  return {
+    mailbox: overrides.mailbox || source.mailboxKey || source.mailbox || DEFAULT_MAILBOX,
+    subject: overrides.subject || source.subject || null,
+    messageId: overrides.messageId || source.messageId || null,
+    renderPages: overrides.renderPages ?? DEFAULT_RENDER_PAGES,
+    maxTextChars: overrides.maxTextChars || DEFAULT_MAX_TEXT_CHARS,
+    downloadAttachments: overrides.downloadAttachments !== false
+  };
+}
+
 function buildReviewPrompt(packet) {
   const attachmentList = packet.attachments.attachments.map((attachment) => (
     `- ${attachment.name} (${attachment.kind}${attachment.pages ? `, ${attachment.pages} pages` : ''})`
+  )).join('\n') || '- None';
+  const blockerList = (packet.blockers || []).map((blocker) => (
+    `- ${blocker.message}`
   )).join('\n') || '- None';
 
   const itemList = packet.attachments.likely_items.slice(0, 40).map((item, index) => (
@@ -266,6 +352,9 @@ function buildReviewPrompt(packet) {
     '',
     'Reviewed attachments:',
     attachmentList,
+    '',
+    'Blocking attachment issues:',
+    blockerList,
     '',
     'Likely quote rows to verify:',
     itemList,
@@ -362,10 +451,24 @@ async function buildQuoteIntake(request = {}) {
     contacts,
     attachments,
     download: downloadResult ? {
-      message_id: downloadResult.message_id,
-      attachment_count: downloadResult.attachment_count,
-      total_bytes: downloadResult.total_bytes,
-      output_dir: downloadResult.output_dir,
+      message_id: downloadResult.message_id || downloadResult.messageId || null,
+      attachment_count: downloadResult.attachment_count ?? downloadResult.attachmentCount ?? (downloadResult.attachments || []).length,
+      total_bytes: downloadResult.total_bytes ?? downloadResult.totalBytes ?? null,
+      output_dir: downloadResult.output_dir || downloadResult.outputDir || null,
+      attachments: (downloadResult.attachments || []).map((attachment) => ({
+        id: attachment.id || null,
+        name: attachment.name || null,
+        originalName: attachment.originalName || null,
+        contentType: attachment.contentType || null,
+        originalContentType: attachment.originalContentType || null,
+        detectedContentType: attachment.detectedContentType || null,
+        contentId: attachment.contentId || null,
+        source: attachment.source || null,
+        referencedBy: attachment.referencedBy || null,
+        path: attachment.path || null,
+        size: attachment.size || null,
+        sha256: attachment.sha256 || null
+      })),
       skipped: downloadResult.skipped || []
     } : null,
     thread_excerpt: (thread.messages || []).slice(-3).map((message) => ({
@@ -376,8 +479,11 @@ async function buildQuoteIntake(request = {}) {
     }))
   };
 
+  packet.blockers = attachmentBlockers(packet.download);
   packet.open_questions = buildOpenQuestions(packet);
-  packet.recommended_next_action = packet.attachments.attachments.length === 0
+  packet.recommended_next_action = packet.blockers.length > 0
+    ? 'resolve_attachment_blockers'
+    : packet.attachments.attachments.length === 0
     ? 'locate_attachments'
     : packet.open_questions.length > 0
       ? 'review_manually'
@@ -393,6 +499,10 @@ module.exports = {
   normalizeDimension,
   extractLikelyItemsFromText,
   buildOpenQuestions,
+  attachmentBlockers,
+  collectReferenceImagePaths,
+  applyReferenceImagesToPayload,
+  handoffIntakeRequest,
   __test: {
     stripHtml,
     externalContacts,
