@@ -1,12 +1,12 @@
 {
   "action": "create-draft-quote",
-  "fingerprint": "3ad4f09a5a2bf7f93639703b8ee4cc455a03b5e52aa607ed64d1b706fd0deb45",
+  "fingerprint": "cebad326d6c4497a03a4eb8596eaca97cc062be28e8a1e004d143e627bd100ba",
   "gate": "prestigio-create-draft-quote",
   "version": 1,
   "source": {
     "app_path": "js/quote-intake/payload-gate/",
     "surface_file": "surface.json",
-    "category_rules_sha256": "1dcdaa6a547f01ce9619978be382a9f53a9eca07bcfe0f3b5ce5d88ebe820379",
+    "category_rules_sha256": "b559204e591eb9e33e809f04f6942d50d2767b4430f8683f273d6764be96105c",
     "validator_sha256": "bd3cc6176dc99838860ddf3bdc842fecc56490ff82d0fa4f197512577aeaad17"
   }
 }
