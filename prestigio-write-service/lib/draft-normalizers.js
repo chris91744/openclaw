@@ -618,8 +618,8 @@ function normalizeBedDraftItem(item, index) {
     hbStyle: formData.headboardStyle || formData.hbStyle || item.headboardStyle || item.hbStyle || 'pullover',
     bedEdge: formData.bedEdge || formData.edge || item.bedEdge || item.edge || 'not-specified',
     edge: formData.bedEdge || formData.edge || item.bedEdge || item.edge || 'not-specified',
-    bedBase: formData.bedBase || formData.base || item.bedBase || item.base || 'attached',
-    base: formData.bedBase || formData.base || item.bedBase || item.base || 'attached',
+    bedBase: formData.baseType || formData.bedBase || formData.base || item.baseType || item.bedBase || item.base || 'attached',
+    base: formData.baseType || formData.bedBase || formData.base || item.baseType || item.bedBase || item.base || 'attached',
     woodSpecies: formData.woodSpecies || item.woodSpecies || '',
     finishSample: formData.finishSample || item.finishSample || '',
     bedFoamThickness: toNullableNumber(formData.bedFoamThickness ?? formData.foamThickness ?? item.bedFoamThickness ?? item.foamThickness),
@@ -1018,6 +1018,126 @@ function draftItemPricingMode(item, normalized) {
   return 'unknown';
 }
 
+// Fields that are noise on a review card or are pricing-lineage artifacts, not
+// human-extracted drivers. Surfacing these would clutter the card and could
+// expose the very sell_price/cost_breakdown values the compiled path forbids
+// the caller from sending.
+const PREVIEW_KEY_INPUT_EXCLUDE = new Set([
+  'category',
+  'quantity',
+  'description',
+  'notes',
+  'clientvisiblenotes',
+  'pricingpayload',
+  'pricingmode',
+  'pricemode',
+  'sell_price',
+  'sellprice',
+  'cost_breakdown',
+  'costbreakdown',
+  'lineitems',
+  'manual_price_override',
+  'manualpriceoverride',
+  'manual_price_override_authorized',
+  'sourceattachments',
+  'source_attachments',
+  'reference_images',
+  'referenceimages',
+  'reference_image_paths',
+  'referenceimagepaths',
+  // Normalizer bookkeeping, not human-extracted drivers.
+  'custom_name',
+  'source',
+  'normalized_by',
+  'item_type',
+  'name',
+]);
+
+// Keep only the non-empty scalar form fields (string / finite number / boolean)
+// that aren't in the exclude set. Arrays (materials) and nested pricing objects
+// fall out naturally because they aren't scalars.
+function filterScalarFormInputs(formData) {
+  const source = cleanObject(formData) || {};
+  const inputs = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (PREVIEW_KEY_INPUT_EXCLUDE.has(String(key).toLowerCase())) continue;
+    if (typeof value === 'string') {
+      const text = cleanText(value, 200);
+      if (text) inputs[key] = text;
+    } else if (typeof value === 'number' && Number.isFinite(value)) {
+      inputs[key] = value;
+    } else if (typeof value === 'boolean') {
+      inputs[key] = value;
+    }
+  }
+  return inputs;
+}
+
+// Surface the scalar pricing-driver fields the caller EXTRACTED (bedSize,
+// laborHours, foamThickness, width, construction, etc.) so the reviewer can
+// eyeball the assumptions behind the price instead of only seeing the price.
+// Sourced from the caller's raw form_data, NOT the normalized output: the raw
+// payload is what the AI actually extracted from the email (the provenance the
+// reviewer is checking) and carries none of the normalizer's alias twins
+// (bedSize+size, headboardHeight+hbHeight, ...) or bookkeeping metadata.
+function buildPreviewKeyInputs(formData) {
+  return filterScalarFormInputs(formData);
+}
+
+// Each normalizer writes some fields under two names — a canonical key and a
+// shorthand twin holding the SAME value (e.g. bed stores size as both `bedSize`
+// and `size`). This maps the twin we DROP -> the canonical we KEEP, per category.
+// Used to de-duplicate the assumed-defaults list without collapsing genuinely
+// distinct fields that merely share a value (e.g. patio seatCount vs backCount,
+// which a value-based collapse would wrongly merge). Keep in sync with the
+// normalize<Category>DraftItem builders above.
+const PREVIEW_FORM_ALIASES = {
+  cushions: { fill: 'cushionFill', type: 'cushionType' },
+  bed: {
+    type: 'bedType', size: 'bedSize', hbHeight: 'headboardHeight',
+    fbHeight: 'footboardHeight', hbStyle: 'headboardStyle', edge: 'bedEdge',
+    base: 'bedBase', foamThickness: 'bedFoamThickness',
+  },
+  ottoman: { type: 'ottomanType', fill: 'ottomanFill' },
+  softgoods: { type: 'softgoodsType' },
+  patio: { type: 'patioType' },
+  restuffing: { type: 'restuffingType', newFillType: 'newFill' },
+};
+
+// Surface the scalar fields the NORMALIZER supplied that the caller never sent —
+// i.e. silent defaults (missing bedSize -> "queen", missing foamThickness -> 2).
+// These are the gap buildPreviewKeyInputs can't show, because key_inputs only
+// reflects what the AI extracted. Listed separately so the reviewer can tell
+// "the email said this" apart from "the system assumed this."
+//
+// Twin keys are removed via the per-category alias map (not by value), so two
+// distinct fields that happen to default to the same value both survive. Boolean
+// defaults of `false` are dropped: an "assumed off" toggle is noise, not a
+// meaningful guess worth flagging.
+function buildPreviewAssumedDefaults(rawFormData, normalizedFormData, category) {
+  const raw = cleanObject(rawFormData);
+  if (!raw || !normalizedFormData) return {};
+  const aliasMap = PREVIEW_FORM_ALIASES[normalizeKey(category)] || {};
+  const extracted = filterScalarFormInputs(raw);
+  const normalized = filterScalarFormInputs(normalizedFormData);
+  // A field counts as caller-provided whether the AI sent the canonical key or
+  // its shorthand twin, so an extracted value is never re-listed as "assumed".
+  const providedKeys = new Set();
+  for (const key of Object.keys(extracted)) {
+    providedKeys.add(key.toLowerCase());
+    const canonical = aliasMap[key];
+    if (canonical) providedKeys.add(canonical.toLowerCase());
+  }
+  const defaults = {};
+  for (const [key, value] of Object.entries(normalized)) {
+    if (aliasMap[key]) continue;
+    if (providedKeys.has(key.toLowerCase())) continue;
+    if (value === false) continue;
+    defaults[key] = value;
+  }
+  return defaults;
+}
+
 function summarizeCompiledDraftItemsForPreview(items) {
   if (!Array.isArray(items)) return [];
   return items.map((item, index) => {
@@ -1037,6 +1157,8 @@ function summarizeCompiledDraftItemsForPreview(items) {
       unit_price: unitPrice,
       line_total: unitPrice !== null ? Math.round(unitPrice * qty * 100) / 100 : null,
       pricing_mode: draftItemPricingMode(item, normalized),
+      key_inputs: buildPreviewKeyInputs(item?.form_data || normalized?.form_data),
+      assumed_defaults: buildPreviewAssumedDefaults(item?.form_data, normalized?.form_data, normalized?.category || item?.category),
       description: cleanText(normalized?.description, 5000),
       reference_image_paths: cleanArray(normalized?.reference_image_paths || normalized?.referenceImagePaths),
       source_attachments: cleanArray(
