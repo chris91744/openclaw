@@ -198,25 +198,26 @@ test('pillow draft fill is canonicalized on the persist path (matches the app hu
   assert.equal(normalized.form_data.pillowFill, 'down-50');
 });
 
-test('legacy pillow poly-fiber normalizes to elite-fiber for new persisted drafts', () => {
-  const normalized = normalizeDraftItem(
-    {
-      category: 'pillows',
-      item_name: 'Legacy poly pillow',
-      quantity: 1,
-      sell_price: 120,
-      form_data: {
-        pillowType: 'throw',
-        pillowFill: 'poly-fiber',
-        width: 20,
-        height: 20,
+test('legacy pillow poly-fiber is rejected for new persisted drafts', () => {
+  assert.throws(
+    () => normalizeDraftItem(
+      {
+        category: 'pillows',
+        item_name: 'Legacy poly pillow',
         quantity: 1,
+        sell_price: 120,
+        form_data: {
+          pillowType: 'throw',
+          pillowFill: 'poly-fiber',
+          width: 20,
+          height: 20,
+          quantity: 1,
+        },
       },
-    },
-    0,
+      0,
+    ),
+    /poly-fiber.*legacy-only/,
   );
-
-  assert.equal(normalized.form_data.pillowFill, 'elite-fiber');
 });
 
 test('draft fill-family aliases persist canonical keys', () => {
@@ -252,7 +253,7 @@ test('draft fill-family aliases persist canonical keys', () => {
         seatFill: '50/50',
         backStyle: 'tight',
         backInsert: 'solid-down',
-        backFill: 'poly-fiber',
+        backFill: 'elite-fiber',
       },
     },
     0,

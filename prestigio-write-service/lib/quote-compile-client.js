@@ -300,6 +300,14 @@ function createQuoteCompileClient(deps) {
     return normalized;
   }
 
+  function isDeprecatedFillGradeKey(value) {
+    const normalized = normalizeKey(value);
+    return normalized === 'poly-fiber' ||
+      normalized === 'poly-fill' ||
+      normalized === 'polyfiber' ||
+      normalized === 'poly-fibre';
+  }
+
   function normalizePatioSeatFillKey(value) {
     const family = normalizeFillFamilyKey(value);
     if (!family) return 'foam-dacron';
@@ -309,17 +317,20 @@ function createQuoteCompileClient(deps) {
 
   function normalizePatioBackFillKey(value) {
     const normalized = normalizeKey(value);
-    if (!normalized || normalized === 'fiber-fill' || normalized === 'fiberfill') return 'solid';
+    if (!normalized) return 'envelope';
+    if (normalized === 'fiber-fill' || normalized === 'fiberfill') return 'solid';
     return normalizeFillFamilyKey(normalized);
   }
 
   function normalizeFillGradeKey(value, fallback = '') {
     const normalized = normalizeKey(value);
     if (!normalized) return fallback;
+    if (isDeprecatedFillGradeKey(normalized)) {
+      throw new Error(`Fill grade "${normalized}" is legacy-only. Use a current grade such as angel-hair or elite-fiber.`);
+    }
     if (normalized === '50/50' || normalized === '50-50' || normalized === '50-50-down') return 'down-50';
     if (normalized === '25/75' || normalized === '25-75' || normalized === '25-75-down') return 'down-25';
     if (normalized === '100/0' || normalized === '100-0' || normalized === '100-down' || normalized === '100-down-feather') return 'down-100';
-    if (normalized === 'poly-fiber' || normalized === 'poly-fill' || normalized === 'polyfiber' || normalized === 'poly-fibre') return 'elite-fiber';
     return normalized;
   }
 

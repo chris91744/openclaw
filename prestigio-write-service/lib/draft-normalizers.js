@@ -212,13 +212,23 @@ function normalizeFillFamilyKey(value) {
   return normalized;
 }
 
+function isDeprecatedFillGradeKey(value) {
+  const normalized = normalizeKey(value);
+  return normalized === 'poly-fiber' ||
+    normalized === 'poly-fill' ||
+    normalized === 'polyfiber' ||
+    normalized === 'poly-fibre';
+}
+
 function normalizeFillGradeKey(value, fallback = '') {
   const normalized = normalizeKey(value);
   if (!normalized) return fallback;
+  if (isDeprecatedFillGradeKey(normalized)) {
+    throw new Error(`Fill grade "${normalized}" is legacy-only. Use a current grade such as angel-hair or elite-fiber.`);
+  }
   if (normalized === '50/50' || normalized === '50-50' || normalized === '50-50-down') return 'down-50';
   if (normalized === '25/75' || normalized === '25-75' || normalized === '25-75-down') return 'down-25';
   if (normalized === '100/0' || normalized === '100-0' || normalized === '100-down' || normalized === '100-down-feather') return 'down-100';
-  if (normalized === 'poly-fiber' || normalized === 'poly-fill' || normalized === 'polyfiber' || normalized === 'poly-fibre') return 'elite-fiber';
   return normalized;
 }
 
@@ -231,7 +241,8 @@ function normalizePatioSeatFillKey(value) {
 
 function normalizePatioBackFillKey(value) {
   const normalized = normalizeKey(value);
-  if (!normalized || normalized === 'fiber-fill' || normalized === 'fiberfill') return 'solid';
+  if (!normalized) return 'envelope';
+  if (normalized === 'fiber-fill' || normalized === 'fiberfill') return 'solid';
   return normalizeFillFamilyKey(normalized);
 }
 
@@ -909,7 +920,7 @@ function normalizePatioDraftItem(item, index) {
   const type = normalizeKey(formData.patioType || formData.type || item.patioType || item.type || item.item_type || 'chair');
   const quantity = toNullableNumber(formData.quantity ?? item.quantity) || 1;
   const seatFill = normalizePatioSeatFillKey(formData.seatFill || item.seatFill || 'foam-dacron');
-  const backFill = normalizePatioBackFillKey(formData.backFill || item.backFill || 'fiber-fill');
+  const backFill = normalizePatioBackFillKey(formData.backFill || item.backFill || 'envelope');
   const normalizedFormData = {
     ...formData,
     category: 'patio',
