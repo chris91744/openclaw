@@ -172,16 +172,17 @@ function createQuoteCompileClient(deps) {
     if (!Array.isArray(items)) return items;
     return items.map((item) => {
       if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
-      const category = getItemCategory(item);
-      if (category !== 'seating' && category !== 'custom-furniture' && category !== 'seat') return item;
+      let nextItem = withCanonicalFillVocabulary(item);
+      const category = getItemCategory(nextItem);
+      if (category !== 'seating' && category !== 'custom-furniture' && category !== 'seat') return nextItem;
 
-      const materialRequirement = getSeatingMaterialRequirement(item);
-      if (!materialRequirement) return item;
+      const materialRequirement = getSeatingMaterialRequirement(nextItem);
+      if (!materialRequirement) return nextItem;
 
-      const formData = cleanObject(item.form_data) || {};
-      const nextItem = { ...item };
-      if (Array.isArray(item.materials)) {
-        nextItem.materials = applySeatingLeatherRequirementToMaterials(item.materials, materialRequirement);
+      const formData = cleanObject(nextItem.form_data) || {};
+      nextItem = { ...nextItem };
+      if (Array.isArray(nextItem.materials)) {
+        nextItem.materials = applySeatingLeatherRequirementToMaterials(nextItem.materials, materialRequirement);
       }
       if (Array.isArray(formData.materials)) {
         nextItem.form_data = {
@@ -281,6 +282,112 @@ function createQuoteCompileClient(deps) {
 
   function formHasRateOverride(formData, qtyKey, rateKey) {
     return toNullableNumber(formData?.[qtyKey]) !== null && toNullableNumber(formData?.[rateKey]) !== null;
+  }
+
+  function normalizeFillFamilyKey(value) {
+    const normalized = normalizeKey(value);
+    if (!normalized) return '';
+    if (normalized === 'foam' || normalized === 'foam-only' || normalized === 'foam-and-dacron' || normalized === 'foam-dacron') return 'foam-dacron';
+    if ([
+      'foam-down-wrap',
+      'foam-down',
+      'foam-fill-wrap',
+      'foam-with-down-wrap',
+      'foam-w-down-wrap',
+    ].includes(normalized)) return 'envelope';
+    if (normalized === 'solid' || normalized === 'solid-down' || normalized === 'solid-fill' || normalized === 'solid-fill-no-foam') return 'solid';
+    if (normalized === 'spring-and-down' || normalized === 'marshall-spring-down') return 'spring-down';
+    return normalized;
+  }
+
+  function normalizePatioSeatFillKey(value) {
+    const family = normalizeFillFamilyKey(value);
+    if (!family) return 'foam-dacron';
+    if (family === 'solid' || family === 'spring-down' || family === 'fiber-fill') return 'envelope';
+    return family;
+  }
+
+  function normalizePatioBackFillKey(value) {
+    const normalized = normalizeKey(value);
+    if (!normalized || normalized === 'fiber-fill' || normalized === 'fiberfill') return 'solid';
+    return normalizeFillFamilyKey(normalized);
+  }
+
+  function normalizeFillGradeKey(value, fallback = '') {
+    const normalized = normalizeKey(value);
+    if (!normalized) return fallback;
+    if (normalized === '50/50' || normalized === '50-50' || normalized === '50-50-down') return 'down-50';
+    if (normalized === '25/75' || normalized === '25-75' || normalized === '25-75-down') return 'down-25';
+    if (normalized === '100/0' || normalized === '100-0' || normalized === '100-down' || normalized === '100-down-feather') return 'down-100';
+    if (normalized === 'poly-fiber' || normalized === 'poly-fill' || normalized === 'polyfiber' || normalized === 'poly-fibre') return 'elite-fiber';
+    return normalized;
+  }
+
+  function normalizeRestuffingFillKey(value, fallback = 'same') {
+    const family = normalizeFillFamilyKey(value);
+    if (family === 'solid') return 'solid';
+    return normalizeFillGradeKey(value, fallback);
+  }
+
+  function mapFillVocabularyCanonically(source, category) {
+    const input = cleanObject(source);
+    if (!input) return { value: source, changed: false };
+    const next = { ...input };
+    let changed = false;
+    const set = (key, mapper) => {
+      if (next[key] === undefined) return;
+      const mapped = mapper(next[key]);
+      if (mapped !== next[key]) {
+        next[key] = mapped;
+        changed = true;
+      }
+    };
+    const setValue = (key, value) => {
+      if (next[key] === value) return;
+      next[key] = value;
+      changed = true;
+    };
+    const normalizedCategory = normalizeKey(category || next.category);
+
+    if (normalizedCategory === 'pillows' || normalizedCategory === 'pillow') {
+      for (const key of ['pillowFill', 'fill', 'fillMaterial']) set(key, value => normalizeFillGradeKey(value, 'down-50'));
+    } else if (normalizedCategory === 'cushions' || normalizedCategory === 'cushion') {
+      for (const key of ['cushionFill', 'fill']) set(key, value => normalizeFillFamilyKey(value));
+      for (const key of ['envelopeFill', 'solidDownFill', 'backFill']) set(key, value => normalizeFillGradeKey(value, value));
+    } else if (normalizedCategory === 'ottoman' || normalizedCategory === 'ottomans') {
+      for (const key of ['ottomanFill', 'fill']) set(key, value => normalizeFillFamilyKey(value));
+      set('wrapType', value => normalizeFillGradeKey(value, 'down-50'));
+    } else if (normalizedCategory === 'patio' || normalizedCategory === 'outdoor') {
+      set('seatFill', value => normalizePatioSeatFillKey(value));
+      const backFamily = normalizePatioBackFillKey(next.backFill);
+      set('backFill', value => normalizePatioBackFillKey(value));
+      set('seatEnvelopeFill', value => normalizeFillGradeKey(value, 'elite-fiber'));
+      set('backEnvelopeFill', value => normalizeFillGradeKey(value, 'elite-fiber'));
+      if (backFamily === 'solid' || normalizeKey(source.backFill) === 'fiber-fill') {
+        setValue('backEnvelopeFill', 'elite-fiber');
+      }
+    } else if (normalizedCategory === 'seating' || normalizedCategory === 'custom-furniture' || normalizedCategory === 'reupholstery') {
+      for (const key of ['seatInsert', 'backInsert', 'tightBackAddonInsert']) set(key, value => normalizeFillFamilyKey(value));
+      for (const key of ['seatFill', 'backFill', 'tightBackAddonFill']) set(key, value => normalizeFillGradeKey(value, value));
+    } else if (normalizedCategory === 'restuffing' || normalizedCategory === 'restuff') {
+      set('currentFill', value => normalizeRestuffingFillKey(value, 'unknown'));
+      set('newFill', value => normalizeRestuffingFillKey(value, 'same'));
+      set('newFillType', value => normalizeRestuffingFillKey(value, 'same'));
+    }
+
+    return { value: changed ? next : source, changed };
+  }
+
+  function withCanonicalFillVocabulary(item) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
+    const category = getItemCategory(item);
+    const mappedItem = mapFillVocabularyCanonically(item, category);
+    const mappedFormData = mapFillVocabularyCanonically(cleanObject(item.form_data) || {}, category);
+    if (!mappedItem.changed && !mappedFormData.changed) return item;
+    return {
+      ...(mappedItem.value === item ? item : mappedItem.value),
+      form_data: mappedFormData.changed ? mappedFormData.value : item.form_data,
+    };
   }
 
   function requireAnyPricingRow(context, category, keys) {
@@ -854,33 +961,34 @@ function createQuoteCompileClient(deps) {
     if (!item || typeof item !== 'object') return item;
     if (!itemNeedsCompile(item)) return item;
 
-    const category = getItemCategory(item);
+    const canonicalItem = withCanonicalFillVocabulary(item);
+    const category = getItemCategory(canonicalItem);
     if (category === 'pillows' || category === 'pillow') {
-      return compileWithPricingGuard(item, () => compilePillowItem(item));
+      return compileWithPricingGuard(canonicalItem, () => compilePillowItem(canonicalItem));
     }
     if (category === 'cushions' || category === 'cushion') {
-      return compileWithPricingGuard(item, () => compileCushionItem(item));
+      return compileWithPricingGuard(canonicalItem, () => compileCushionItem(canonicalItem));
     }
     if (category === 'reupholstery' || category === 'reupholster') {
-      return compileWithPricingGuard(item, () => compileReupholsteryItem(item));
+      return compileWithPricingGuard(canonicalItem, () => compileReupholsteryItem(canonicalItem));
     }
     if (category === 'restuffing' || category === 'restuff') {
-      return compileWithPricingGuard(item, () => compileRestuffingItem(item));
+      return compileWithPricingGuard(canonicalItem, () => compileRestuffingItem(canonicalItem));
     }
     if (category === 'patio' || category === 'outdoor') {
-      return compileWithPricingGuard(item, () => compilePatioItem(item));
+      return compileWithPricingGuard(canonicalItem, () => compilePatioItem(canonicalItem));
     }
     if (category === 'softgoods' || category === 'soft-goods' || category === 'slipcover') {
-      return compileWithPricingGuard(item, () => compileSoftgoodsItem(item));
+      return compileWithPricingGuard(canonicalItem, () => compileSoftgoodsItem(canonicalItem));
     }
     if (category === 'ottoman' || category === 'ottomans') {
-      return compileWithPricingGuard(item, () => compileOttomanItem(item));
+      return compileWithPricingGuard(canonicalItem, () => compileOttomanItem(canonicalItem));
     }
     if (category === 'bed' || category === 'beds') {
-      return compileWithPricingGuard(item, () => compileBedItem(item));
+      return compileWithPricingGuard(canonicalItem, () => compileBedItem(canonicalItem));
     }
     if (category === 'seating' || category === 'custom-furniture' || category === 'seat') {
-      return compileWithPricingGuard(item, () => compileSeatingItem(item));
+      return compileWithPricingGuard(canonicalItem, () => compileSeatingItem(canonicalItem));
     }
     return item;
   }

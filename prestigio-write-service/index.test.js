@@ -5,19 +5,19 @@ const { createOrchestrator } = require('./lib/orchestrator');
 
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://example.supabase.co';
 process.env.SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || 'test-key';
-process.env.QUOTE_PLAN_CONTRACTS_PATH = path.resolve(__dirname, '../../prestigio-app/js/quote-plan-contracts.js');
-process.env.QUOTE_FILL_CALCULATOR_PATH = path.resolve(__dirname, '../../prestigio-app/js/quote-fill-calculator.js');
-process.env.PILLOWS_CALC_PATH = path.resolve(__dirname, '../../prestigio-app/js/categories/pillows.calc.js');
-process.env.CUSHIONS_CALC_PATH = path.resolve(__dirname, '../../prestigio-app/js/categories/cushions.calc.js');
-process.env.REUPHOLSTERY_CALC_PATH = path.resolve(__dirname, '../../prestigio-app/js/categories/reupholstery.calc.js');
-process.env.RESTUFFING_CALC_PATH = path.resolve(__dirname, '../../prestigio-app/js/categories/restuffing.calc.js');
-process.env.PATIO_CALC_PATH = path.resolve(__dirname, '../../prestigio-app/js/categories/patio.calc.js');
-process.env.SOFTGOODS_CALC_PATH = path.resolve(__dirname, '../../prestigio-app/js/categories/softgoods.calc.js');
-process.env.OTTOMAN_CALC_PATH = path.resolve(__dirname, '../../prestigio-app/js/categories/ottoman.calc.js');
-process.env.BED_CALC_PATH = path.resolve(__dirname, '../../prestigio-app/js/categories/bed.calc.js');
-process.env.SEATING_CALC_PATH = path.resolve(__dirname, '../../prestigio-app/js/categories/seating.calc.js');
-process.env.QUOTE_DESCRIPTION_GENERATORS_PATH = path.resolve(__dirname, '../../prestigio-app/js/quote-description-generators.js');
-process.env.PAYLOAD_GATE_PATH = path.resolve(__dirname, '../../prestigio-app/js/quote-intake/payload-gate/index.cjs');
+process.env.QUOTE_PLAN_CONTRACTS_PATH = process.env.QUOTE_PLAN_CONTRACTS_PATH || path.resolve(__dirname, '../../prestigio-app/js/quote-plan-contracts.js');
+process.env.QUOTE_FILL_CALCULATOR_PATH = process.env.QUOTE_FILL_CALCULATOR_PATH || path.resolve(__dirname, '../../prestigio-app/js/quote-fill-calculator.js');
+process.env.PILLOWS_CALC_PATH = process.env.PILLOWS_CALC_PATH || path.resolve(__dirname, '../../prestigio-app/js/categories/pillows.calc.js');
+process.env.CUSHIONS_CALC_PATH = process.env.CUSHIONS_CALC_PATH || path.resolve(__dirname, '../../prestigio-app/js/categories/cushions.calc.js');
+process.env.REUPHOLSTERY_CALC_PATH = process.env.REUPHOLSTERY_CALC_PATH || path.resolve(__dirname, '../../prestigio-app/js/categories/reupholstery.calc.js');
+process.env.RESTUFFING_CALC_PATH = process.env.RESTUFFING_CALC_PATH || path.resolve(__dirname, '../../prestigio-app/js/categories/restuffing.calc.js');
+process.env.PATIO_CALC_PATH = process.env.PATIO_CALC_PATH || path.resolve(__dirname, '../../prestigio-app/js/categories/patio.calc.js');
+process.env.SOFTGOODS_CALC_PATH = process.env.SOFTGOODS_CALC_PATH || path.resolve(__dirname, '../../prestigio-app/js/categories/softgoods.calc.js');
+process.env.OTTOMAN_CALC_PATH = process.env.OTTOMAN_CALC_PATH || path.resolve(__dirname, '../../prestigio-app/js/categories/ottoman.calc.js');
+process.env.BED_CALC_PATH = process.env.BED_CALC_PATH || path.resolve(__dirname, '../../prestigio-app/js/categories/bed.calc.js');
+process.env.SEATING_CALC_PATH = process.env.SEATING_CALC_PATH || path.resolve(__dirname, '../../prestigio-app/js/categories/seating.calc.js');
+process.env.QUOTE_DESCRIPTION_GENERATORS_PATH = process.env.QUOTE_DESCRIPTION_GENERATORS_PATH || path.resolve(__dirname, '../../prestigio-app/js/quote-description-generators.js');
+process.env.PAYLOAD_GATE_PATH = process.env.PAYLOAD_GATE_PATH || path.resolve(__dirname, '../../prestigio-app/js/quote-intake/payload-gate/index.cjs');
 
 const {
   assertDraftManualPricingAllowed,
@@ -196,6 +196,170 @@ test('pillow draft fill is canonicalized on the persist path (matches the app hu
   // normalizePillowFill does, so AI-built and human-built pillows store the
   // same fill key. Regression guard: resolvePillowFillKey was previously dead.
   assert.equal(normalized.form_data.pillowFill, 'down-50');
+});
+
+test('legacy pillow poly-fiber normalizes to elite-fiber for new persisted drafts', () => {
+  const normalized = normalizeDraftItem(
+    {
+      category: 'pillows',
+      item_name: 'Legacy poly pillow',
+      quantity: 1,
+      sell_price: 120,
+      form_data: {
+        pillowType: 'throw',
+        pillowFill: 'poly-fiber',
+        width: 20,
+        height: 20,
+        quantity: 1,
+      },
+    },
+    0,
+  );
+
+  assert.equal(normalized.form_data.pillowFill, 'elite-fiber');
+});
+
+test('draft fill-family aliases persist canonical keys', () => {
+  const cushion = normalizeDraftItem(
+    {
+      category: 'cushions',
+      item_name: 'Solid cushion',
+      quantity: 1,
+      sell_price: 200,
+      form_data: {
+        cushionType: 'bench',
+        cushionFill: 'solid-down',
+        length: 48,
+        depth: 22,
+        thickness: 4,
+      },
+    },
+    0,
+  );
+  const seating = normalizeDraftItem(
+    {
+      category: 'seating',
+      item_name: 'Alias chair',
+      quantity: 1,
+      sell_price: 500,
+      form_data: {
+        type: 'chair',
+        width: 30,
+        depth: 30,
+        height: 32,
+        seatStyle: 'loose',
+        seatInsert: 'foam-down-wrap',
+        seatFill: '50/50',
+        backStyle: 'tight',
+        backInsert: 'solid-down',
+        backFill: 'poly-fiber',
+      },
+    },
+    0,
+  );
+
+  assert.equal(cushion.form_data.cushionFill, 'solid');
+  assert.equal(cushion.form_data.fill, 'solid');
+  assert.equal(seating.form_data.seatInsert, 'envelope');
+  assert.equal(seating.form_data.seatFill, 'down-50');
+  assert.equal(seating.form_data.backInsert, 'solid');
+  assert.equal(seating.form_data.backFill, 'elite-fiber');
+});
+
+test('patio legacy fiber-fill persists as back-only solid with elite-fiber grade', () => {
+  const normalized = normalizeDraftItem(
+    {
+      category: 'patio',
+      item_name: 'Patio backs',
+      quantity: 1,
+      sell_price: 300,
+      form_data: {
+        patioType: 'chair',
+        width: 24,
+        depth: 26,
+        height: 36,
+        seatFill: 'foam-dacron',
+        backEnabled: true,
+        backFill: 'fiber-fill',
+        backEnvelopeFill: 'down-50',
+      },
+    },
+    0,
+  );
+
+  assert.equal(normalized.form_data.seatFill, 'foam-dacron');
+  assert.equal(normalized.form_data.backFill, 'solid');
+  assert.equal(normalized.form_data.backEnvelopeFill, 'elite-fiber');
+});
+
+test('pre-gate draft normalization keeps canonical patio solid for the canonical app gate', () => {
+  const [normalized] = normalizeDraftQuoteItemsForPayloadGate([
+    {
+      category: 'patio',
+      form_data: {
+        category: 'patio',
+        patioType: 'chair',
+        width: 24,
+        depth: 26,
+        seatFill: 'foam-dacron',
+        backEnabled: true,
+        backFill: 'solid',
+      },
+    },
+  ]);
+
+  assert.equal(normalized.form_data.backFill, 'solid');
+  assert.equal(normalized.form_data.backEnvelopeFill, 'elite-fiber');
+});
+
+test('compiled patio canonical solid preserves legacy fiber-fill pricing semantics', async () => {
+  setActivePricingSettingsFromRows([
+    { category: 'multiplier', item_key: 'material', value: '1.667' },
+    { category: 'material', item_key: 'dryfast-4', value: '128' },
+    { category: 'fill', item_key: 'elite-fiber', value: '7' },
+    { category: 'labor', item_key: 'patio', value: '130' },
+  ]);
+
+  try {
+    const items = [
+      {
+        category: 'patio',
+        form_data: {
+          category: 'patio',
+          patioType: 'chair',
+          quantity: 1,
+          width: 24,
+          depth: 26,
+          height: 36,
+          seatCount: 1,
+          seatThickness: 4,
+          seatFill: 'foam-dacron',
+          backEnabled: true,
+          backCount: 1,
+          backThickness: 4,
+          backFill: 'solid',
+          useCushionDims: true,
+          seatLength: 24,
+          seatDepth: 26,
+          backLength: 24,
+          backWidth: 20,
+          construction: 'blind-seam',
+          ties: 'no',
+          zipper: 'no',
+        },
+      },
+    ];
+
+    const [compiled] = await compileDraftQuoteItems(items);
+    const normalized = normalizeDraftItem(compiled, 0);
+
+    assert.equal(normalized.form_data.backFill, 'solid');
+    assert.equal(normalized.form_data.backEnvelopeFill, 'elite-fiber');
+    assert.equal(normalized.cost_breakdown?.back_fill?.qty, 3);
+    assert.equal(normalized.cost_breakdown?.back_fill?.rate, 7);
+  } finally {
+    clearActivePricingSettings();
+  }
 });
 
 test('reupholstery golden fixture matches shared compile output', async () => {

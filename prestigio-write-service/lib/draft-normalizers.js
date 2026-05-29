@@ -132,6 +132,7 @@ function formatInsert(insert) {
   const labels = {
     foam: 'Foam',
     'foam-dacron': 'Foam + Dacron',
+    solid: 'Solid Fill',
     'down-25': '25/75 Down & Feather',
     'down-50': '50/50 Down & Feather',
     'angel-hair': 'Angel Hair',
@@ -195,8 +196,77 @@ function normalizePillowType(value) {
   return normalized;
 }
 
-function resolvePillowFillKey(value) {
+function normalizeFillFamilyKey(value) {
   const normalized = normalizeKey(value);
+  if (!normalized) return '';
+  if (normalized === 'foam' || normalized === 'foam-only' || normalized === 'foam-and-dacron' || normalized === 'foam-dacron') return 'foam-dacron';
+  if ([
+    'foam-down-wrap',
+    'foam-down',
+    'foam-fill-wrap',
+    'foam-with-down-wrap',
+    'foam-w-down-wrap',
+  ].includes(normalized)) return 'envelope';
+  if (normalized === 'solid' || normalized === 'solid-down' || normalized === 'solid-fill' || normalized === 'solid-fill-no-foam') return 'solid';
+  if (normalized === 'spring-and-down' || normalized === 'marshall-spring-down') return 'spring-down';
+  return normalized;
+}
+
+function normalizeFillGradeKey(value, fallback = '') {
+  const normalized = normalizeKey(value);
+  if (!normalized) return fallback;
+  if (normalized === '50/50' || normalized === '50-50' || normalized === '50-50-down') return 'down-50';
+  if (normalized === '25/75' || normalized === '25-75' || normalized === '25-75-down') return 'down-25';
+  if (normalized === '100/0' || normalized === '100-0' || normalized === '100-down' || normalized === '100-down-feather') return 'down-100';
+  if (normalized === 'poly-fiber' || normalized === 'poly-fill' || normalized === 'polyfiber' || normalized === 'poly-fibre') return 'elite-fiber';
+  return normalized;
+}
+
+function normalizePatioSeatFillKey(value) {
+  const family = normalizeFillFamilyKey(value);
+  if (!family) return 'foam-dacron';
+  if (family === 'solid' || family === 'spring-down' || family === 'fiber-fill') return 'envelope';
+  return family;
+}
+
+function normalizePatioBackFillKey(value) {
+  const normalized = normalizeKey(value);
+  if (!normalized || normalized === 'fiber-fill' || normalized === 'fiberfill') return 'solid';
+  return normalizeFillFamilyKey(normalized);
+}
+
+function canonicalizeCushionSetFillVocabulary(cushionSet) {
+  const set = cleanObject(cushionSet);
+  const components = cleanObject(set?.components);
+  if (!set || !components) return cushionSet;
+  const nextComponents = { ...components };
+  for (const key of ['seat', 'back']) {
+    const component = cleanObject(nextComponents[key]);
+    const insert = cleanObject(component?.insert);
+    if (!component || !insert) continue;
+    nextComponents[key] = {
+      ...component,
+      insert: {
+        ...insert,
+        ...(insert.type !== undefined ? { type: normalizeFillFamilyKey(insert.type) } : {}),
+        ...(insert.fillMaterial !== undefined ? { fillMaterial: normalizeFillGradeKey(insert.fillMaterial, insert.fillMaterial) } : {}),
+      },
+    };
+  }
+  return {
+    ...set,
+    components: nextComponents,
+  };
+}
+
+function normalizeRestuffingFillKey(value, fallback = 'same') {
+  const family = normalizeFillFamilyKey(value);
+  if (family === 'solid') return 'solid';
+  return normalizeFillGradeKey(value, fallback);
+}
+
+function resolvePillowFillKey(value) {
+  const normalized = normalizeFillGradeKey(value, 'down-50');
   if (!normalized || normalized === '50/50' || normalized === '50-50' || normalized === '50-50-down') return 'down-50';
   if (normalized === '25/75' || normalized === '25-75' || normalized === '25-75-down') return 'down-25';
   if (normalized === '100/0' || normalized === '100-0' || normalized === '100-down' || normalized === '100-down-feather') return 'down-100';
@@ -279,6 +349,14 @@ function normalizeReupholsteryDraftItem(item, index) {
     quantity: toNullableNumber(formData.quantity ?? item.quantity) || 1,
     materials: cleanArray(formData.materials).length ? cleanArray(formData.materials) : cleanArray(item.materials)
   };
+  for (const key of ['seatInsert', 'backInsert']) {
+    const value = formData[key] ?? item[key];
+    if (value !== undefined) normalizedFormData[key] = normalizeFillFamilyKey(value);
+  }
+  for (const key of ['seatFill', 'backFill']) {
+    const value = formData[key] ?? item[key];
+    if (value !== undefined) normalizedFormData[key] = normalizeFillGradeKey(value, '');
+  }
 
   const description = buildReupholsteryDescription(normalizedFormData, { ...item, type });
   const costBreakdown = normalizeQuoteRevisionCostBreakdownLines(item.cost_breakdown || item.lineItems);
@@ -377,6 +455,7 @@ function normalizeCushionDraftItem(item, index) {
   const formData = cleanObject(item.form_data) || {};
   const type = normalizeCushionType(formData.cushionType || item.cushionType || item.type || item.item_type);
   const quantity = toNullableNumber(formData.quantity ?? item.quantity) || 1;
+  const cushionFill = normalizeFillFamilyKey(formData.cushionFill || formData.fill || item.cushionFill || item.fill || 'foam-dacron') || 'foam-dacron';
   const normalizedFormData = {
     ...formData,
     category: 'cushions',
@@ -386,10 +465,10 @@ function normalizeCushionDraftItem(item, index) {
     length: toNullableNumber(formData.length ?? item.length),
     depth: toNullableNumber(formData.depth ?? item.depth),
     thickness: toNullableNumber(formData.thickness ?? item.thickness),
-    cushionFill: formData.cushionFill || formData.fill || item.cushionFill || item.fill || 'foam-dacron',
-    fill: formData.cushionFill || formData.fill || item.cushionFill || item.fill || 'foam-dacron',
-    envelopeFill: formData.envelopeFill || item.envelopeFill || 'down-50',
-    solidDownFill: formData.solidDownFill || item.solidDownFill || 'down-50',
+    cushionFill,
+    fill: cushionFill,
+    envelopeFill: normalizeFillGradeKey(formData.envelopeFill || item.envelopeFill, 'down-50'),
+    solidDownFill: normalizeFillGradeKey(formData.solidDownFill || item.solidDownFill, 'down-50'),
     foamType: formData.foamType || item.foamType || 'hrfoam',
     construction: formData.construction || item.construction || 'blind-seam',
     ties: formData.ties || item.ties || 'no',
@@ -402,6 +481,12 @@ function normalizeCushionDraftItem(item, index) {
     estimatedFabricYardage: toNullableNumber(formData.estimatedFabricYardage ?? item.estimatedFabricYardage ?? item.estimated_fabric_yardage),
     estimatedFabricCost: toNullableNumber(formData.estimatedFabricCost ?? item.estimatedFabricCost ?? item.estimated_fabric_cost)
   };
+  if (normalizedFormData.backFill !== undefined) {
+    normalizedFormData.backFill = normalizeFillGradeKey(normalizedFormData.backFill, normalizedFormData.backFill);
+  }
+  if (normalizedFormData.cushionSet !== undefined) {
+    normalizedFormData.cushionSet = canonicalizeCushionSetFillVocabulary(normalizedFormData.cushionSet);
+  }
 
   const description = buildCushionDescription(normalizedFormData, item);
   const costBreakdown = normalizeQuoteRevisionCostBreakdownLines(item.cost_breakdown || item.lineItems);
@@ -511,25 +596,25 @@ function normalizeSeatingDraftItem(item, index) {
     seatSpecEnabled,
     backSpecEnabled,
     seatStyle: formData.seatStyle || item.seatStyle || '',
-    seatFill: formData.seatFill || item.seatFill || '',
+    seatFill: normalizeFillGradeKey(formData.seatFill || item.seatFill, ''),
     seatCount: toNullableNumber(formData.seatCount ?? item.seatCount),
-    seatInsert: formData.seatInsert || item.seatInsert || '',
+    seatInsert: normalizeFillFamilyKey(formData.seatInsert || item.seatInsert),
     seatSeam: formData.seatSeam || item.seatSeam || '',
     seatFoamType: formData.seatFoamType || item.seatFoamType || '',
     seatFoam: formData.seatFoam || item.seatFoam || '',
     backStyle: formData.backStyle || item.backStyle || '',
-    backFill: formData.backFill || item.backFill || '',
-    backInsert: formData.backInsert || item.backInsert || '',
+    backFill: normalizeFillGradeKey(formData.backFill || item.backFill, ''),
+    backInsert: normalizeFillFamilyKey(formData.backInsert || item.backInsert),
     backCount: toNullableNumber(formData.backCount ?? item.backCount),
     backSeam: formData.backSeam || item.backSeam || '',
     backFoamType: formData.backFoamType || item.backFoamType || '',
     backFoam: formData.backFoam || item.backFoam || '',
     tightBackAddon: Boolean(formData.tightBackAddon ?? item.tightBackAddon),
     tightBackAddonCount: toNullableNumber(formData.tightBackAddonCount ?? item.tightBackAddonCount),
-    tightBackAddonInsert: formData.tightBackAddonInsert || item.tightBackAddonInsert || '',
+    tightBackAddonInsert: normalizeFillFamilyKey(formData.tightBackAddonInsert || item.tightBackAddonInsert),
     tightBackAddonFoamType: formData.tightBackAddonFoamType || item.tightBackAddonFoamType || '',
     tightBackAddonFoam: formData.tightBackAddonFoam || item.tightBackAddonFoam || '',
-    tightBackAddonFill: formData.tightBackAddonFill || item.tightBackAddonFill || '',
+    tightBackAddonFill: normalizeFillGradeKey(formData.tightBackAddonFill || item.tightBackAddonFill, ''),
     tightBackAddonSeam: formData.tightBackAddonSeam || item.tightBackAddonSeam || '',
     swivelBase: Boolean(formData.swivelBase ?? item.swivelBase),
     slipcover: Boolean(formData.slipcover ?? item.slipcover),
@@ -682,6 +767,7 @@ function normalizeOttomanDraftItem(item, index) {
   const formData = cleanObject(item.form_data) || {};
   const type = normalizeKey(formData.ottomanType || formData.type || item.ottomanType || item.type || item.item_type || 'ottoman');
   const quantity = toNullableNumber(formData.quantity ?? item.quantity) || 1;
+  const ottomanFill = normalizeFillFamilyKey(formData.ottomanFill || formData.fill || item.ottomanFill || item.fill || 'foam-dacron') || 'foam-dacron';
   const normalizedFormData = {
     ...formData,
     category: 'ottoman',
@@ -694,9 +780,9 @@ function normalizeOttomanDraftItem(item, index) {
     width: toNullableNumber(formData.width ?? item.width),
     height: toNullableNumber(formData.height ?? item.height),
     topStyle: formData.topStyle || item.topStyle || 'tight-seat',
-    ottomanFill: formData.ottomanFill || formData.fill || item.ottomanFill || item.fill || 'foam-dacron',
-    fill: formData.ottomanFill || formData.fill || item.ottomanFill || item.fill || 'foam-dacron',
-    wrapType: formData.wrapType || item.wrapType || 'down-50',
+    ottomanFill,
+    fill: ottomanFill,
+    wrapType: normalizeFillGradeKey(formData.wrapType || item.wrapType, 'down-50'),
     foamType: formData.foamType || item.foamType || 'hrfoam',
     foamThickness: toNullableNumber(formData.foamThickness ?? item.foamThickness),
     edge: formData.edge || item.edge || 'blind-seam',
@@ -822,6 +908,8 @@ function normalizePatioDraftItem(item, index) {
   const formData = cleanObject(item.form_data) || {};
   const type = normalizeKey(formData.patioType || formData.type || item.patioType || item.type || item.item_type || 'chair');
   const quantity = toNullableNumber(formData.quantity ?? item.quantity) || 1;
+  const seatFill = normalizePatioSeatFillKey(formData.seatFill || item.seatFill || 'foam-dacron');
+  const backFill = normalizePatioBackFillKey(formData.backFill || item.backFill || 'fiber-fill');
   const normalizedFormData = {
     ...formData,
     category: 'patio',
@@ -834,13 +922,15 @@ function normalizePatioDraftItem(item, index) {
     height: toNullableNumber(formData.height ?? item.height),
     seatCount: toNullableNumber(formData.seatCount ?? item.seatCount) || 1,
     seatThickness: toNullableNumber(formData.seatThickness ?? item.seatThickness) || 4,
-    seatFill: formData.seatFill || item.seatFill || 'foam-dacron',
-    seatEnvelopeFill: formData.seatEnvelopeFill || item.seatEnvelopeFill || 'down-50',
+    seatFill,
+    seatEnvelopeFill: normalizeFillGradeKey(formData.seatEnvelopeFill || item.seatEnvelopeFill, 'elite-fiber'),
     backEnabled: Boolean(formData.backEnabled ?? item.backEnabled ?? true),
     backCount: toNullableNumber(formData.backCount ?? item.backCount) || 1,
     backThickness: toNullableNumber(formData.backThickness ?? item.backThickness) || 4,
-    backFill: formData.backFill || item.backFill || 'fiber-fill',
-    backEnvelopeFill: formData.backEnvelopeFill || item.backEnvelopeFill || 'down-50',
+    backFill,
+    backEnvelopeFill: backFill === 'solid'
+      ? 'elite-fiber'
+      : normalizeFillGradeKey(formData.backEnvelopeFill || item.backEnvelopeFill, 'elite-fiber'),
     useCushionDims: Boolean(formData.useCushionDims ?? item.useCushionDims),
     seatLength: toNullableNumber(formData.seatLength ?? item.seatLength),
     seatDepth: toNullableNumber(formData.seatDepth ?? item.seatDepth),
@@ -902,6 +992,7 @@ function normalizeRestuffingDraftItem(item, index) {
   const formData = cleanObject(item.form_data) || {};
   const type = normalizeKey(formData.restuffingType || formData.type || item.restuffingType || item.type || item.item_type || 'seat-cushion');
   const quantity = toNullableNumber(formData.quantity ?? item.quantity) || 1;
+  const newFill = normalizeRestuffingFillKey(formData.newFill || formData.newFillType || item.newFill || item.newFillType || 'same');
   const normalizedFormData = {
     ...formData,
     category: 'restuffing',
@@ -913,9 +1004,9 @@ function normalizeRestuffingDraftItem(item, index) {
     width: toNullableNumber(formData.width ?? item.width),
     depth: toNullableNumber(formData.depth ?? item.depth),
     thickness: toNullableNumber(formData.thickness ?? item.thickness),
-    currentFill: formData.currentFill || item.currentFill || 'unknown',
-    newFill: formData.newFill || formData.newFillType || item.newFill || item.newFillType || 'same',
-    newFillType: formData.newFill || formData.newFillType || item.newFill || item.newFillType || 'same',
+    currentFill: normalizeRestuffingFillKey(formData.currentFill || item.currentFill || 'unknown', 'unknown'),
+    newFill,
+    newFillType: newFill,
     newCover: Boolean(formData.newCover ?? item.newCover),
     notes: formData.notes || item.notes || '',
     materials: cleanArray(formData.materials).length ? cleanArray(formData.materials) : cleanArray(item.materials)
