@@ -39,6 +39,7 @@ function buildDraftQuoteDescription(items) {
 const REUPHOLSTERY_TYPE_LABELS = {
   sofa: 'SOFA',
   chair: 'CHAIR',
+  'dining-chair': 'DINING CHAIR',
   sectional: 'SECTIONAL',
   loveseat: 'LOVESEAT',
   ottoman: 'OTTOMAN',
@@ -67,17 +68,16 @@ const REUPHOLSTERY_CONDITION_LABELS = {
   poor: 'POOR - FULL STRIP-DOWN AND MAJOR RESTORATION'
 };
 
+// Only the fields actually consumed by the draft normalizer are kept here.
+// type is used by normalizeReupholsteryType(); scope/condition/materialType are
+// enforced by assertAllowed below. seatStyle/backStyle/seam/insert/foamType/
+// foamThickness were dead copies that had drifted from the app description
+// generator's REUPHOLSTERY_VALID — removed to keep a single source per field.
 const REUPHOLSTERY_VALID = {
   type: new Set(Object.keys(REUPHOLSTERY_TYPE_LABELS)),
   scope: new Set(Object.keys(REUPHOLSTERY_SCOPE_LABELS)),
   condition: new Set(Object.keys(REUPHOLSTERY_CONDITION_LABELS)),
-  materialType: new Set(['fabric', 'leather']),
-  seatStyle: new Set(['tight', 'loose', 'attached']),
-  backStyle: new Set(['tight', 'loose-back-cushion', 'loose-pillow', 'attached-pillow', 'channeled', 'tufted']),
-  seam: new Set(['not-specified', 'blind-seam', 'self-welt', 'contrast-welt', 'double-welt', 'single-topstitch', 'double-topstitch', 'cot', 'flange']),
-  insert: new Set(['foam', 'foam-dacron', 'down-25', 'down-50', 'angel-hair', 'elite-fiber', 'spring-down']),
-  foamType: new Set(['dryfast', 'foam18', 'hrfoam']),
-  foamThickness: new Set(['1', '2', '3', '4', '5', '6'])
+  materialType: new Set(['fabric', 'leather'])
 };
 
 
