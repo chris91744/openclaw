@@ -33,6 +33,7 @@ const {
   isAllowedAttachmentPath,
   mergeQuoteRevisionPatchIntoItem,
   normalizeAttachmentPath,
+  normalizeDraftItem,
   normalizeDraftQuoteItemsForPayloadGate,
   reviseExistingQuote,
   resolveDraftSourceAttachments,
@@ -169,6 +170,32 @@ test('pillow golden fixture matches shared compile output', async () => {
   } finally {
     clearActivePricingSettings();
   }
+});
+
+test('pillow draft fill is canonicalized on the persist path (matches the app human path)', () => {
+  // normalizeDraftItem is exactly what the persist builder runs per item
+  // (quote-handlers builds the recorded items via fields.items.map(normalizeDraftItem)).
+  const normalized = normalizeDraftItem(
+    {
+      category: 'pillows',
+      item_name: 'Test pillow',
+      quantity: 1,
+      sell_price: 120,
+      form_data: {
+        pillowType: 'throw',
+        pillowFill: '50/50',
+        width: 20,
+        height: 20,
+        quantity: 1,
+        construction: 'blind-seam',
+      },
+    },
+    0,
+  );
+  // "50/50" must canonicalize to "down-50" the same way the app's
+  // normalizePillowFill does, so AI-built and human-built pillows store the
+  // same fill key. Regression guard: resolvePillowFillKey was previously dead.
+  assert.equal(normalized.form_data.pillowFill, 'down-50');
 });
 
 test('reupholstery golden fixture matches shared compile output', async () => {

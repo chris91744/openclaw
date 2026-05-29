@@ -46,7 +46,7 @@ const MAX_QUOTE_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const QUOTE_IMAGE_BUCKET = 'quote-images';
 const QUOTE_ATTACHMENT_BUCKET = process.env.QUOTE_ATTACHMENT_BUCKET || QUOTE_IMAGE_BUCKET;
 const PRICING_SETTINGS_TTL_MS = Number(process.env.PRESTIGIO_PRICING_SETTINGS_TTL_MS || 5 * 60 * 1000);
-const KNOWN_PILLOW_FILL_KEYS = new Set(['down-50', 'down-25', 'down-100', 'angel-hair', 'elite-fiber', 'other']);
+const KNOWN_PILLOW_FILL_KEYS = new Set(['down-50', 'down-25', 'down-100', 'angel-hair', 'elite-fiber', 'poly-fiber', 'other']);
 const PRESTIGIO_APP_BASE_URL = (process.env.PRESTIGIO_APP_BASE_URL || 'https://app.prestigio.la').replace(/\/+$/, '');
 
 const bus = createBus({
@@ -372,6 +372,7 @@ module.exports = {
   summarizeDraftQuotePricingModes,
   summarizeCompiledDraftItemsForPreview,
   sumDraftQuoteItems,
+  normalizeDraftItem,
   getPayloadGate,
   normalizeDraftQuoteItemsForPayloadGate: quoteHandlers.normalizeDraftQuoteItemsForPayloadGate,
   compileDraftQuoteItems: quoteHandlers.compileDraftQuoteItems,

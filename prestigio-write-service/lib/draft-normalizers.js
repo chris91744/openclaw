@@ -320,7 +320,7 @@ function normalizePillowDraftItem(item, index) {
     ...formData,
     category: 'pillows',
     pillowType: type,
-    pillowFill: formData.pillowFill || item.pillowFill || item.fill,
+    pillowFill: resolvePillowFillKey(formData.pillowFill || item.pillowFill || item.fill),
     construction: formData.construction || item.construction || 'blind-seam',
     zipper: formData.zipper || item.zipper || 'no',
     width: toNullableNumber(formData.width ?? item.width),
