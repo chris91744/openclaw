@@ -2,7 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
-const { quotePlanContracts, quoteDescriptionGenerators, pillowCalc, cushionCalc, reupholsteryCalc, restuffingCalc, patioCalc, softgoodsCalc, ottomanCalc, bedCalc, seatingCalc } = require('./lib/shared-app-modules');
+const { quotePlanContracts, quotePlanHandoff, quoteDescriptionGenerators, pillowCalc, cushionCalc, reupholsteryCalc, restuffingCalc, patioCalc, softgoodsCalc, ottomanCalc, bedCalc, seatingCalc } = require('./lib/shared-app-modules');
 const utils = require('./lib/utils');
 const { createPricingCalculators } = require('./lib/pricing-calculators');
 const { createPricingSettings } = require('./lib/pricing-settings');
@@ -225,6 +225,7 @@ const mergeRevisionPatch = createMergeRevisionPatch({
 const {
   buildQuoteRevisionItemUpdates,
   assertQuoteRevisionManualPricingAllowed,
+  assertQuoteRevisionStructuredPayloadAllowed,
   assertAppQuoteTaxonomyAllowed,
   hasDirectSellPriceUpdate,
   isDescriptionAffectingQuotePatch,
@@ -276,6 +277,7 @@ const quoteHandlers = createQuoteHandlers({
   roundCurrency,
   buildModernQuoteUrl,
   quotePlanContracts,
+  quotePlanHandoff,
   normalizeDraftItem,
   buildDraftQuoteDescription: draftNormalizers.buildDraftQuoteDescription,
   getDraftQuoteSiteVisitTotal,
@@ -284,6 +286,7 @@ const quoteHandlers = createQuoteHandlers({
   costBreakdownNeedsLivePricingSettings,
   hasDirectSellPriceUpdate,
   assertQuoteRevisionManualPricingAllowed,
+  assertQuoteRevisionStructuredPayloadAllowed,
   buildQuoteRevisionItemUpdates,
   mergeQuoteRevisionPatchIntoItem,
   applyQuoteRevisionItemPatch,
@@ -357,6 +360,7 @@ module.exports = {
   assertDraftMaterialsValid: quoteCompileClient.assertDraftMaterialsValid,
   assertDraftAttachmentReferencesValid: quoteHandlers.assertDraftAttachmentReferencesValid,
   assertQuoteRevisionManualPricingAllowed,
+  assertQuoteRevisionStructuredPayloadAllowed,
   assertQuoteRevisionPricingLineageConsistent,
   clearActivePricingSettings,
   getDraftQuoteSiteVisitTotal,

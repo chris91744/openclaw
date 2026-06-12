@@ -300,22 +300,124 @@ function createMergeRevisionPatch(deps) {
     return Object.prototype.hasOwnProperty.call(raw, 'sell_price');
   }
 
+  function hasSuppliedRevisionCostBreakdown(updates) {
+    const raw = cleanObject(updates) || {};
+    return fieldIsPresent(raw.cost_breakdown) || fieldIsPresent(raw.lineItems);
+  }
+
   function quoteRevisionManualPriceAuthorized(fields, op) {
-    const updates = cleanObject(op?.updates) || {};
-    return (
-      truthyAuthorization(fields?.manual_price_override_authorized) ||
-      truthyAuthorization(op?.manual_price_override_authorized) ||
-      truthyAuthorization(updates.manual_price_override_authorized)
-    );
+    return truthyAuthorization(fields?.manual_price_override_authorized);
   }
 
   function assertQuoteRevisionManualPricingAllowed(fields, op) {
     if (!hasDirectSellPriceUpdate(op?.updates)) return;
+    if (hasSuppliedRevisionCostBreakdown(op?.updates)) {
+      throw new Error(
+        'Manual sell_price overrides for quote revisions must omit cost_breakdown and lineItems. ' +
+        'Send structured cost_breakdown drivers and omit sell_price so the writer can calculate, or send only the trusted final sell_price after Chris explicitly approves a manual override.',
+      );
+    }
     if (quoteRevisionManualPriceAuthorized(fields, op)) return;
     throw new Error(
       'Manual sell_price overrides are blocked for quote revisions. ' +
       'Change form_data/cost_breakdown pricing drivers and omit sell_price, or add manual_price_override_authorized: true only after Chris explicitly approves a manual price override for this line.',
     );
+  }
+
+  const AGENT_FORBIDDEN_REVISION_FORM_FIELDS = [
+    'assumptions',
+    'bedConstructionNotes',
+    'bedModificationScopeSummary',
+    'bedTvLiftAccessNotes',
+    'bedTvLiftClearanceNotes',
+    'bedTvLiftNotes',
+    'bedTvLiftPowerNotes',
+    'client_questions',
+    'client_visible_notes',
+    'clientVisibleNotes',
+    'constructionNotes',
+    'description',
+    'manual_price_override_authorized',
+    'manual_price_override',
+    'manualPriceOverride',
+    'modificationScopeSummary',
+    'notes',
+    'priceMode',
+    'pricingMode',
+    'quote_notes',
+    'raw_text',
+    'rawText',
+    'source_text',
+    'sourceText',
+    'tvLiftAccessNotes',
+    'tvLiftClearanceNotes',
+    'tvLiftNotes',
+    'tvLiftPowerNotes',
+  ];
+
+  const AGENT_FORBIDDEN_REVISION_NESTED_FORM_PATHS = [
+    ['tvLift', 'accessNotes'],
+    ['tvLift', 'clearanceNotes'],
+    ['tvLift', 'notes'],
+    ['tvLift', 'powerNotes'],
+    ['bedTvLift', 'accessNotes'],
+    ['bedTvLift', 'clearanceNotes'],
+    ['bedTvLift', 'notes'],
+    ['bedTvLift', 'powerNotes'],
+    ['modification', 'scopeSummary'],
+    ['modification', 'notes'],
+    ['work', 'notes'],
+  ];
+
+  function fieldIsPresent(value) {
+    if (value === null || value === undefined || value === '') return false;
+    if (typeof value === 'string') return value.trim().length > 0;
+    return true;
+  }
+
+  function valueAtPath(object, path) {
+    let current = object;
+    for (const segment of path) {
+      if (!current || typeof current !== 'object' || Array.isArray(current)) return undefined;
+      current = current[segment];
+    }
+    return current;
+  }
+
+  function assertQuoteRevisionStructuredPayloadAllowed(fields, op) {
+    const updates = cleanObject(op?.updates) || {};
+    if (fieldIsPresent(updates.description)) {
+      throw new Error(
+        'Quote revisions must omit direct description updates. ' +
+        'Change structured form_data fields and let the app/RPA regenerate quote copy.',
+      );
+    }
+    if (
+      fieldIsPresent(op?.manual_price_override_authorized) ||
+      fieldIsPresent(updates.manual_price_override_authorized) ||
+      fieldIsPresent(updates.manual_price_override) ||
+      fieldIsPresent(updates.manualPriceOverride)
+    ) {
+      throw new Error(
+        'Quote revisions must not self-authorize manual pricing inside an operation. ' +
+        'Use trusted confirmation-level manual_price_override_authorized only after Chris explicitly approves it.',
+      );
+    }
+    const formData = cleanObject(updates.form_data) || {};
+    for (const field of AGENT_FORBIDDEN_REVISION_FORM_FIELDS) {
+      if (!fieldIsPresent(formData[field])) continue;
+      throw new Error(
+        `Quote revisions must omit form_data.${field}. ` +
+        'Agent-created revisions may only send approved structured fields; prose belongs in review context.',
+      );
+    }
+    for (const path of AGENT_FORBIDDEN_REVISION_NESTED_FORM_PATHS) {
+      if (!fieldIsPresent(valueAtPath(formData, path))) continue;
+      throw new Error(
+        `Quote revisions must omit form_data.${path.join('.')}. ` +
+        'Agent-created revisions may only send approved structured fields; nested prose belongs in review context.',
+      );
+    }
   }
 
   function assertAppQuoteTaxonomyAllowed(item, context = 'quote item') {
@@ -438,6 +540,7 @@ function createMergeRevisionPatch(deps) {
     hasDirectSellPriceUpdate,
     quoteRevisionManualPriceAuthorized,
     assertQuoteRevisionManualPricingAllowed,
+    assertQuoteRevisionStructuredPayloadAllowed,
     assertAppQuoteTaxonomyAllowed,
     deepMergeQuoteRevisionObjects,
     isDescriptionAffectingQuotePatch,

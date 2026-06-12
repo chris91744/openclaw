@@ -6,6 +6,7 @@ const { createOrchestrator } = require('./lib/orchestrator');
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://example.supabase.co';
 process.env.SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || 'test-key';
 process.env.QUOTE_PLAN_CONTRACTS_PATH = path.resolve(__dirname, '../../prestigio-app/js/quote-plan-contracts.js');
+process.env.QUOTE_PLAN_HANDOFF_PATH = path.resolve(__dirname, '../../prestigio-app/js/quote-plan-handoff.js');
 process.env.QUOTE_FILL_CALCULATOR_PATH = path.resolve(__dirname, '../../prestigio-app/js/quote-fill-calculator.js');
 process.env.PILLOWS_CALC_PATH = path.resolve(__dirname, '../../prestigio-app/js/categories/pillows.calc.js');
 process.env.CUSHIONS_CALC_PATH = path.resolve(__dirname, '../../prestigio-app/js/categories/cushions.calc.js');
@@ -24,6 +25,7 @@ const {
   assertDraftMaterialsValid,
   assertDraftAttachmentReferencesValid,
   assertQuoteRevisionManualPricingAllowed,
+  assertQuoteRevisionStructuredPayloadAllowed,
   assertQuoteRevisionPricingLineageConsistent,
   buildDraftQuotePayload,
   buildConfirmSummary,
@@ -686,6 +688,156 @@ test('compiled draft items accept manual sell_price with override authorization'
   assert.match(summary, /manual\/client-facing sell price/);
 });
 
+test('compiled draft manual sell_price overrides reject supplied cost breakdowns', async () => {
+  for (const field of ['cost_breakdown', 'lineItems']) {
+    const items = [
+      {
+        category: 'seating',
+        item_type: 'chair',
+        quantity: 1,
+        sell_price: 7190,
+        [field]: {
+          labor_upholstery: { hours: 2, rate: 130, final: 260 },
+        },
+        form_data: {
+          category: 'seating',
+          type: 'chair',
+          width: 33.08,
+          depth: 35.44,
+          height: 33.47,
+        },
+      },
+    ];
+
+    assert.throws(
+      () => assertDraftManualPricingAllowed(items, {
+        manual_price_override_authorized: true,
+      }),
+      new RegExp(`omit .*${field === 'cost_breakdown' ? 'cost_breakdown' : 'lineItems'}`),
+      field,
+    );
+
+    await assert.rejects(
+      () => compileDraftQuoteItems(items, {
+        manual_price_override_authorized: true,
+      }),
+      /manual sell_price override/,
+      field,
+    );
+  }
+
+  const formDataItems = [
+    {
+      category: 'seating',
+      item_type: 'chair',
+      quantity: 1,
+      sell_price: 7190,
+      form_data: {
+        category: 'seating',
+        type: 'chair',
+        width: 33.08,
+        depth: 35.44,
+        height: 33.47,
+        cost_breakdown: {
+          labor_upholstery: { hours: 2, rate: 130, final: 260 },
+        },
+      },
+    },
+  ];
+
+  assert.throws(
+    () => assertDraftManualPricingAllowed(formDataItems, {
+      manual_price_override_authorized: true,
+    }),
+    /must omit cost_breakdown and lineItems/,
+  );
+});
+
+test('compiled draft items reject agent self-authorized manual sell_price', () => {
+  const items = [
+    {
+      category: 'pillows',
+      quantity: 2,
+      sell_price: 225,
+      manualPriceOverride: true,
+      form_data: {
+        pillowType: 'throw',
+        pillowFill: 'down-50',
+        width: 20,
+        height: 20,
+      },
+    },
+  ];
+
+  assert.throws(
+    () => assertDraftManualPricingAllowed(items),
+    /must use the compiled pricing path/,
+  );
+
+  delete items[0].manualPriceOverride;
+  items[0].form_data.manual_price_override = true;
+  assert.throws(
+    () => assertDraftManualPricingAllowed(items),
+    /must use the compiled pricing path/,
+  );
+});
+
+test('compiled draft items reject direct price aliases', () => {
+  for (const field of ['price', 'total', 'unitPrice', 'unit_price']) {
+    const items = [
+      {
+        category: 'pillows',
+        quantity: 2,
+        form_data: {
+          pillowType: 'throw',
+          pillowFill: 'down-50',
+          width: 20,
+          height: 20,
+        },
+        [field]: 225,
+      },
+    ];
+
+    assert.throws(
+      () => assertDraftManualPricingAllowed(items),
+      new RegExp(`omit ${field}`),
+      field,
+    );
+  }
+
+  const formItems = [
+    {
+      category: 'pillows',
+      quantity: 2,
+      form_data: {
+        pillowType: 'throw',
+        pillowFill: 'down-50',
+        width: 20,
+        height: 20,
+        total: 225,
+      },
+    },
+  ];
+  assert.throws(
+    () => assertDraftManualPricingAllowed(formItems),
+    /omit total/,
+  );
+});
+
+test('draft quote payload rejects direct quote grand totals', async () => {
+  await assert.rejects(
+    () => buildDraftQuotePayload({
+      quote: {
+        client_id: 'client-1',
+        sidemark: 'Manual total attempt',
+        grand_total: 1,
+      },
+      items: [],
+    }),
+    /omit quote\.grand_total/,
+  );
+});
+
 test('preview summaries include compiled item descriptions and pricing mode', async () => {
   const golden = require('../../prestigio-app/js/categories/pillows.compile-golden.json');
   setActivePricingSettingsFromRows(golden.pricing_rows);
@@ -907,7 +1059,7 @@ test('create draft pre-gate normalizer still blocks seating leather when dimensi
   assert.equal(payload.items[0].form_data.materials[0].sqft, undefined);
   assert.throws(
     () => gate.validateCreateDraftQuote(payload),
-    /form_data\.depth/
+    /leather\/COL requires sqft/
   );
 });
 
@@ -1073,6 +1225,45 @@ test('draft quote payload preserves source PDFs separately from reference images
 
   assert.deepEqual(payload.items[0].reference_images, ['https://cdn.example.com/chair-preview.jpg']);
   assert.deepEqual(payload.items[0].form_data.sourceAttachments, [sourcePdf]);
+});
+
+test('draft quote payload saves a quoted plan snapshot for receipt lineage', async () => {
+  const payload = await buildDraftQuotePayload({
+    quote: {
+      client_id: 'client-1',
+      sidemark: 'Receipt Lineage Test',
+    },
+    items: [
+      {
+        category: 'pillows',
+        item_type: 'throw',
+        item_name: 'Receipt Pillow',
+        quantity: 2,
+        cost_breakdown: {
+          fill: { qty: 2.1, rate: 20, raw: 42, multiplier: 1.67, final: 70.14 },
+          labor_upholstery: { hours: 1, rate: 130, raw: 130, multiplier: 1, final: 130 },
+        },
+        form_data: {
+          category: 'pillows',
+          pillowType: 'throw',
+          pillowFill: 'down-50',
+          width: 20,
+          height: 20,
+          pricing_lineage: {
+            source: 'pricing_settings',
+            rows_count: 42,
+          },
+        },
+      },
+    ],
+  });
+
+  const item = payload.items[0];
+  assert.equal(item.quoted_plan_snapshot.schema_version, 1);
+  assert.deepEqual(item.quoted_plan_snapshot.item.cost_breakdown, item.cost_breakdown);
+  assert.equal(item.quoted_plan_snapshot.item.sell_price, item.sell_price);
+  assert.equal(item.quoted_plan_snapshot.form_data.pricing_lineage.source, 'pricing_settings');
+  assert.equal(item.quoted_plan_snapshot.form_data.pillowFill, 'down-50');
 });
 
 test('draft quote payload keeps seating spec sections enabled when style fields are present', async () => {
@@ -1280,7 +1471,7 @@ test('quote revision direct sell price requires explicit manual override authori
     /Manual sell_price overrides are blocked/
   );
 
-  assert.doesNotThrow(
+  assert.throws(
     () => assertQuoteRevisionManualPricingAllowed(
       {},
       {
@@ -1292,8 +1483,43 @@ test('quote revision direct sell price requires explicit manual override authori
           form_data: { width: 124 }
         }
       }
+    ),
+    /Manual sell_price overrides are blocked/
+  );
+
+  assert.doesNotThrow(
+    () => assertQuoteRevisionManualPricingAllowed(
+      { manual_price_override_authorized: true },
+      {
+        op: 'update_item',
+        item_id: 'item-1',
+        updates: {
+          sell_price: 7450,
+          form_data: { width: 124 }
+        }
+      }
     )
   );
+
+  for (const field of ['cost_breakdown', 'lineItems']) {
+    assert.throws(
+      () => assertQuoteRevisionManualPricingAllowed(
+        { manual_price_override_authorized: true },
+        {
+          op: 'update_item',
+          item_id: 'item-1',
+          updates: {
+            sell_price: 7450,
+            [field]: {
+              labor: { hours: 2, rate: 130 },
+            },
+          },
+        }
+      ),
+      /must omit cost_breakdown and lineItems/,
+      field,
+    );
+  }
 
   assert.doesNotThrow(
     () => assertQuoteRevisionManualPricingAllowed(
@@ -1309,6 +1535,71 @@ test('quote revision direct sell price requires explicit manual override authori
         }
       }
     )
+  );
+});
+
+test('quote revisions reject direct description and prose form_data patches', () => {
+  assert.throws(
+    () => assertQuoteRevisionStructuredPayloadAllowed(
+      {},
+      {
+        op: 'update_item',
+        item_id: 'item-1',
+        updates: {
+          description: 'Freehand client-facing revision copy',
+        },
+      },
+    ),
+    /omit direct description/,
+  );
+
+  assert.throws(
+    () => assertQuoteRevisionStructuredPayloadAllowed(
+      {},
+      {
+        op: 'update_item',
+        item_id: 'item-1',
+        updates: {
+          form_data: {
+            notes: 'Requires minimum under-bed height from supplied spec.',
+          },
+        },
+      },
+    ),
+    /form_data\.notes/,
+  );
+
+  assert.throws(
+    () => assertQuoteRevisionStructuredPayloadAllowed(
+      {},
+      {
+        op: 'update_item',
+        item_id: 'item-1',
+        manual_price_override_authorized: true,
+        updates: {
+          sell_price: 7450,
+        },
+      },
+    ),
+    /must not self-authorize manual pricing/,
+  );
+
+  assert.throws(
+    () => assertQuoteRevisionStructuredPayloadAllowed(
+      {},
+      {
+        op: 'update_item',
+        item_id: 'item-1',
+        updates: {
+          form_data: {
+            tvLift: {
+              clearanceNotes: 'Requires minimum under-bed height from supplied spec.',
+            },
+          },
+        },
+      },
+    ),
+    /form_data\.tvLift\.clearanceNotes/,
   );
 });
 

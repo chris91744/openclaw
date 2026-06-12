@@ -21,6 +21,7 @@ function createQuoteHandlers(deps) {
     roundCurrency,
     buildModernQuoteUrl,
     quotePlanContracts,
+    quotePlanHandoff,
     normalizeDraftItem,
     buildDraftQuoteDescription,
     getDraftQuoteSiteVisitTotal,
@@ -29,6 +30,7 @@ function createQuoteHandlers(deps) {
     costBreakdownNeedsLivePricingSettings,
     hasDirectSellPriceUpdate,
     assertQuoteRevisionManualPricingAllowed,
+    assertQuoteRevisionStructuredPayloadAllowed,
     buildQuoteRevisionItemUpdates,
     mergeQuoteRevisionPatchIntoItem,
     applyQuoteRevisionItemPatch,
@@ -53,6 +55,13 @@ async function compileDraftQuoteItems(items, fields = {}) {
 function normalizeDraftQuoteItemsForPayloadGate(items) {
   if (typeof quoteCompileClient.normalizeDraftQuoteItemsForPayloadGate !== 'function') return items;
   return quoteCompileClient.normalizeDraftQuoteItemsForPayloadGate(items);
+}
+
+function buildDraftQuoteItemSnapshot(payload) {
+  if (typeof quotePlanHandoff?.buildQuotedPlanSnapshot === 'function') {
+    return quotePlanHandoff.buildQuotedPlanSnapshot(payload);
+  }
+  return null;
 }
 
 function draftItemsNeedLivePricingSettings(items) {
@@ -406,6 +415,11 @@ function assertDraftAttachmentReferencesValid(items) {
 
 async function buildDraftQuotePayload(fields) {
   const quote = cleanObject(fields.quote) || {};
+  if (quote.grand_total !== undefined || quote.grandTotal !== undefined) {
+    throw new Error(
+      'create-draft-quote must omit quote.grand_total. The write service derives quote totals from item pricing and site visit fields.',
+    );
+  }
   await compileDraftQuoteItems(fields.items, fields);
   await ensureLivePricingSettingsForDraftItems(fields.items);
   const items = Array.isArray(fields.items) ? fields.items.map((item, index) => normalizeDraftItem(item, index)) : [];
@@ -417,7 +431,6 @@ async function buildDraftQuotePayload(fields) {
     throw new Error('create-draft-quote requires quote.client_id. Resolve or confirm the client before writing.');
   }
 
-  const grandTotal = toNullableNumber(quote.grand_total);
   const siteVisitTotal = getDraftQuoteSiteVisitTotal(quote);
   const itemTotal = sumDraftQuoteItems(items);
   return {
@@ -426,7 +439,7 @@ async function buildDraftQuotePayload(fields) {
       project_id: quote.project_id || null,
       sidemark: cleanText(quote.sidemark || quote.project_name || quote.client_name || 'Draft Quote', 500),
       status: 'draft',
-      grand_total: grandTotal !== null ? grandTotal : Math.round((itemTotal + siteVisitTotal) * 100) / 100,
+      grand_total: Math.round((itemTotal + siteVisitTotal) * 100) / 100,
       site_visit_hours: toNullableNumber(quote.site_visit_hours),
       site_visit_rate: toNullableNumber(quote.site_visit_rate),
       site_visit_total: siteVisitTotal > 0 ? siteVisitTotal : toNullableNumber(quote.site_visit_total),
@@ -452,7 +465,7 @@ async function buildDraftQuotePayload(fields) {
       const formDataWithAttachments = sourceAttachments
         ? { ...formData, sourceAttachments }
         : formData;
-      return {
+      const payload = {
         item_type: cleanText(item.item_type || item.type || itemName, 200),
         item_name: itemName,
         category,
@@ -471,6 +484,8 @@ async function buildDraftQuotePayload(fields) {
         status: 'quote',
         quote_item_status: 'quoted'
       };
+      payload.quoted_plan_snapshot = buildDraftQuoteItemSnapshot(payload);
+      return payload;
     }))
   };
 }
@@ -755,6 +770,7 @@ function buildResolvedQuoteRevisionPlan(fields, quote, items) {
         throw new Error(`Duplicate update_item operation for ${op.item_id}`);
       }
       assertQuoteRevisionManualPricingAllowed(fields, op);
+      assertQuoteRevisionStructuredPayloadAllowed(fields, op);
       const patch = buildQuoteRevisionItemUpdates(op.updates);
       if (!Object.keys(patch).length) {
         throw new Error(`update_item operation for ${op.item_id} has no supported updates`);

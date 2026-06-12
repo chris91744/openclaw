@@ -51,16 +51,30 @@ function createQuoteCompileClient(deps) {
   }
 
   function hasManualPriceOverride(item, fields = {}) {
-    const formData = cleanObject(item?.form_data) || {};
+    return truthyAuthorization(fields?.manual_price_override_authorized);
+  }
+
+  const AMBIGUOUS_DIRECT_PRICE_FIELDS = [
+    'price',
+    'total',
+    'unitPrice',
+    'unit_price',
+    'lineTotal',
+    'line_total',
+  ];
+
+  function fieldIsPresent(value) {
+    if (value === null || value === undefined || value === '') return false;
+    if (typeof value === 'string') return value.trim().length > 0;
+    return true;
+  }
+
+  function hasSuppliedCostBreakdown(item, formData = {}) {
     return (
-      truthyAuthorization(fields?.manual_price_override_authorized) ||
-      truthyAuthorization(item?.manual_price_override_authorized) ||
-      truthyAuthorization(item?.manual_price_override) ||
-      truthyAuthorization(item?.manualPriceOverride) ||
-      truthyAuthorization(formData?.manual_price_override) ||
-      truthyAuthorization(formData?.manualPriceOverride) ||
-      formData?.pricingMode === 'manual' ||
-      formData?.priceMode === 'manual'
+      fieldIsPresent(item?.cost_breakdown) ||
+      fieldIsPresent(item?.lineItems) ||
+      fieldIsPresent(formData?.cost_breakdown) ||
+      fieldIsPresent(formData?.lineItems)
     );
   }
 
@@ -203,9 +217,25 @@ function createQuoteCompileClient(deps) {
     items.forEach((item, index) => {
       const category = getItemCategory(item);
       if (!COMPILED_CATEGORIES.has(category)) return;
+      const formData = cleanObject(item?.form_data) || {};
+      for (const field of AMBIGUOUS_DIRECT_PRICE_FIELDS) {
+        if (!fieldIsPresent(item?.[field]) && !fieldIsPresent(formData[field])) continue;
+        throw new Error(
+          `Draft quote item ${index + 1} (${category}) must omit ${field}. ` +
+          'Compiled quote pricing may use structured form_data, or sell_price only with trusted manual_price_override_authorized approval.',
+        );
+      }
       const sellPrice = item?.sell_price !== undefined ? toNullableNumber(item.sell_price) : null;
       if (sellPrice === null) return;
-      if (hasManualPriceOverride(item, fields)) return;
+      if (hasManualPriceOverride(item, fields)) {
+        if (hasSuppliedCostBreakdown(item, formData)) {
+          throw new Error(
+            `Draft quote item ${index + 1} (${category}) must omit cost_breakdown and lineItems when using a manual sell_price override. ` +
+            'Manual price overrides may only carry the final sell_price; structured pricing receipts must come from the system compiler.',
+          );
+        }
+        return;
+      }
       throw new Error(
         `Draft quote item ${index + 1} (${category}) must use the compiled pricing path: omit sell_price and send structured form_data. ` +
         'Manual sell_price overrides are blocked unless manual_price_override_authorized: true after Chris explicitly approves a manual price override for this line.',

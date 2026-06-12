@@ -3,6 +3,13 @@
 - Repo: https://github.com/openclaw/openclaw
 - GitHub issues/comments/PR comments: use literal multiline strings or `-F - <<'EOF'` (or $'...') for real newlines; never embed "\\n".
 
+## Remote Safety
+
+- In Chris's local checkout, `origin` may point to the public upstream repo `openclaw/openclaw`, while `fork` points to the personal repo `chris91744/openclaw`.
+- Before any push or PR, run `git remote -v` and name the exact target repo in the handoff.
+- Do not push Chris-specific local-service, Prestigio, credential-adjacent, or personal workflow changes to `origin`/`openclaw/openclaw` unless Chris explicitly asks for an upstream contribution.
+- For Chris-specific OpenClaw preservation work, push to `fork`/`chris91744/openclaw` and open PRs there by default.
+
 ## Project Structure & Module Organization
 
 - Source code: `src/` (CLI wiring in `src/cli`, commands in `src/commands`, web provider in `src/provider-web.ts`, infra in `src/infra`, media pipeline in `src/media`).
