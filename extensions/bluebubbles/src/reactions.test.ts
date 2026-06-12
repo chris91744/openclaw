@@ -1,5 +1,9 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { sendBlueBubblesReaction } from "./reactions.js";
+import { normalizeBlueBubblesReactionInput, sendBlueBubblesReaction } from "./reactions.js";
+import {
+  restoreBlueBubblesOutboundEnv,
+  withBlueBubblesOutboundEnabled,
+} from "./test-outbound-env.js";
 
 vi.mock("./accounts.js", () => ({
   resolveBlueBubblesAccount: vi.fn(({ cfg, accountId }) => {
@@ -15,6 +19,13 @@ vi.mock("./accounts.js", () => ({
 
 const mockFetch = vi.fn();
 
+async function expectReactionDisabled(
+  params: Parameters<typeof sendBlueBubblesReaction>[0],
+): Promise<void> {
+  await expect(sendBlueBubblesReaction(params)).rejects.toThrow("OPENCLAW_BLUEBUBBLES_OUTBOUND_ENABLED");
+  expect(mockFetch).not.toHaveBeenCalled();
+}
+
 describe("reactions", () => {
   beforeEach(() => {
     vi.stubGlobal("fetch", mockFetch);
@@ -23,6 +34,7 @@ describe("reactions", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    restoreBlueBubblesOutboundEnv();
   });
 
   describe("sendBlueBubblesReaction", () => {
@@ -106,6 +118,18 @@ describe("reactions", () => {
       ).rejects.toThrow("Unsupported BlueBubbles reaction");
     });
 
+    it("throws at outbound gate when flag unset", async () => {
+      await expectReactionDisabled({
+        chatGuid: "chat-123",
+        messageGuid: "msg-123",
+        emoji: "love",
+        opts: {
+          serverUrl: "http://localhost:1234",
+          password: "test",
+        },
+      });
+    });
+
     describe("reaction type normalization", () => {
       const testCases = [
         { input: "love", expected: "love" },
@@ -142,6 +166,215 @@ describe("reactions", () => {
 
       for (const { input, expected } of testCases) {
         it(`normalizes "${input}" to "${expected}"`, async () => {
+          expect(normalizeBlueBubblesReactionInput(input)).toBe(expected);
+          expect(mockFetch).not.toHaveBeenCalled();
+        });
+      }
+    });
+
+    it("sends reaction successfully", async () => {
+      await withBlueBubblesOutboundEnabled(async () => {
+        mockFetch.mockResolvedValueOnce({
+          ok: true,
+          text: () => Promise.resolve(""),
+        });
+
+        await sendBlueBubblesReaction({
+          chatGuid: "iMessage;-;+15551234567",
+          messageGuid: "msg-uuid-123",
+          emoji: "love",
+          opts: {
+            serverUrl: "http://localhost:1234",
+            password: "test-password",
+          },
+        });
+
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining("/api/v1/message/react"),
+          expect.objectContaining({
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+          }),
+        );
+
+        const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+        expect(body.chatGuid).toBe("iMessage;-;+15551234567");
+        expect(body.selectedMessageGuid).toBe("msg-uuid-123");
+        expect(body.reaction).toBe("love");
+        expect(body.partIndex).toBe(0);
+      });
+    });
+
+    it("includes password in URL query", async () => {
+      await withBlueBubblesOutboundEnabled(async () => {
+        mockFetch.mockResolvedValueOnce({
+          ok: true,
+          text: () => Promise.resolve(""),
+        });
+
+        await sendBlueBubblesReaction({
+          chatGuid: "chat-123",
+          messageGuid: "msg-123",
+          emoji: "like",
+          opts: {
+            serverUrl: "http://localhost:1234",
+            password: "my-react-password",
+          },
+        });
+
+        const calledUrl = mockFetch.mock.calls[0][0] as string;
+        expect(calledUrl).toContain("password=my-react-password");
+      });
+    });
+
+    it("sends reaction removal with dash prefix", async () => {
+      await withBlueBubblesOutboundEnabled(async () => {
+        mockFetch.mockResolvedValueOnce({
+          ok: true,
+          text: () => Promise.resolve(""),
+        });
+
+        await sendBlueBubblesReaction({
+          chatGuid: "chat-123",
+          messageGuid: "msg-123",
+          emoji: "love",
+          remove: true,
+          opts: {
+            serverUrl: "http://localhost:1234",
+            password: "test",
+          },
+        });
+
+        const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+        expect(body.reaction).toBe("-love");
+      });
+      expect(normalizeBlueBubblesReactionInput("love", true)).toBe("-love");
+    });
+
+    it("strips leading dash from emoji when remove flag is set", async () => {
+      await withBlueBubblesOutboundEnabled(async () => {
+        mockFetch.mockResolvedValueOnce({
+          ok: true,
+          text: () => Promise.resolve(""),
+        });
+
+        await sendBlueBubblesReaction({
+          chatGuid: "chat-123",
+          messageGuid: "msg-123",
+          emoji: "-love",
+          remove: true,
+          opts: {
+            serverUrl: "http://localhost:1234",
+            password: "test",
+          },
+        });
+
+        const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+        expect(body.reaction).toBe("-love");
+      });
+      expect(normalizeBlueBubblesReactionInput("-love", true)).toBe("-love");
+    });
+
+    it("uses custom partIndex when provided", async () => {
+      await withBlueBubblesOutboundEnabled(async () => {
+        mockFetch.mockResolvedValueOnce({
+          ok: true,
+          text: () => Promise.resolve(""),
+        });
+
+        await sendBlueBubblesReaction({
+          chatGuid: "chat-123",
+          messageGuid: "msg-123",
+          emoji: "laugh",
+          partIndex: 3,
+          opts: {
+            serverUrl: "http://localhost:1234",
+            password: "test",
+          },
+        });
+
+        const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+        expect(body.partIndex).toBe(3);
+      });
+    });
+
+    it("throws on non-ok response", async () => {
+      await withBlueBubblesOutboundEnabled(async () => {
+        mockFetch.mockResolvedValueOnce({
+          ok: false,
+          status: 400,
+          text: () => Promise.resolve("Invalid reaction type"),
+        });
+
+        await expect(
+          sendBlueBubblesReaction({
+            chatGuid: "chat-123",
+            messageGuid: "msg-123",
+            emoji: "like",
+            opts: {
+              serverUrl: "http://localhost:1234",
+              password: "test",
+            },
+          }),
+        ).rejects.toThrow("reaction failed (400): Invalid reaction type");
+      });
+    });
+
+    it("resolves credentials from config", async () => {
+      await withBlueBubblesOutboundEnabled(async () => {
+        mockFetch.mockResolvedValueOnce({
+          ok: true,
+          text: () => Promise.resolve(""),
+        });
+
+        await sendBlueBubblesReaction({
+          chatGuid: "chat-123",
+          messageGuid: "msg-123",
+          emoji: "emphasize",
+          opts: {
+            cfg: {
+              channels: {
+                bluebubbles: {
+                  serverUrl: "http://react-server:7777",
+                  password: "react-pass",
+                },
+              },
+            },
+          },
+        });
+
+        const calledUrl = mockFetch.mock.calls[0][0] as string;
+        expect(calledUrl).toContain("react-server:7777");
+        expect(calledUrl).toContain("password=react-pass");
+      });
+    });
+
+    it("trims chatGuid and messageGuid", async () => {
+      await withBlueBubblesOutboundEnabled(async () => {
+        mockFetch.mockResolvedValueOnce({
+          ok: true,
+          text: () => Promise.resolve(""),
+        });
+
+        await sendBlueBubblesReaction({
+          chatGuid: "  chat-with-spaces  ",
+          messageGuid: "  msg-with-spaces  ",
+          emoji: "question",
+          opts: {
+            serverUrl: "http://localhost:1234",
+            password: "test",
+          },
+        });
+
+        const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+        expect(body.chatGuid).toBe("chat-with-spaces");
+        expect(body.selectedMessageGuid).toBe("msg-with-spaces");
+      });
+    });
+
+    describe("reaction removal aliases", () => {
+      it("handles emoji-based removal", async () => {
+        await withBlueBubblesOutboundEnabled(async () => {
           mockFetch.mockResolvedValueOnce({
             ok: true,
             text: () => Promise.resolve(""),
@@ -150,7 +383,8 @@ describe("reactions", () => {
           await sendBlueBubblesReaction({
             chatGuid: "chat-123",
             messageGuid: "msg-123",
-            emoji: input,
+            emoji: "👍",
+            remove: true,
             opts: {
               serverUrl: "http://localhost:1234",
               password: "test",
@@ -158,234 +392,33 @@ describe("reactions", () => {
           });
 
           const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-          expect(body.reaction).toBe(expected);
+          expect(body.reaction).toBe("-like");
         });
-      }
-    });
-
-    it("sends reaction successfully", async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        text: () => Promise.resolve(""),
-      });
-
-      await sendBlueBubblesReaction({
-        chatGuid: "iMessage;-;+15551234567",
-        messageGuid: "msg-uuid-123",
-        emoji: "love",
-        opts: {
-          serverUrl: "http://localhost:1234",
-          password: "test-password",
-        },
-      });
-
-      expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining("/api/v1/message/react"),
-        expect.objectContaining({
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-        }),
-      );
-
-      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-      expect(body.chatGuid).toBe("iMessage;-;+15551234567");
-      expect(body.selectedMessageGuid).toBe("msg-uuid-123");
-      expect(body.reaction).toBe("love");
-      expect(body.partIndex).toBe(0);
-    });
-
-    it("includes password in URL query", async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        text: () => Promise.resolve(""),
-      });
-
-      await sendBlueBubblesReaction({
-        chatGuid: "chat-123",
-        messageGuid: "msg-123",
-        emoji: "like",
-        opts: {
-          serverUrl: "http://localhost:1234",
-          password: "my-react-password",
-        },
-      });
-
-      const calledUrl = mockFetch.mock.calls[0][0] as string;
-      expect(calledUrl).toContain("password=my-react-password");
-    });
-
-    it("sends reaction removal with dash prefix", async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        text: () => Promise.resolve(""),
-      });
-
-      await sendBlueBubblesReaction({
-        chatGuid: "chat-123",
-        messageGuid: "msg-123",
-        emoji: "love",
-        remove: true,
-        opts: {
-          serverUrl: "http://localhost:1234",
-          password: "test",
-        },
-      });
-
-      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-      expect(body.reaction).toBe("-love");
-    });
-
-    it("strips leading dash from emoji when remove flag is set", async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        text: () => Promise.resolve(""),
-      });
-
-      await sendBlueBubblesReaction({
-        chatGuid: "chat-123",
-        messageGuid: "msg-123",
-        emoji: "-love",
-        remove: true,
-        opts: {
-          serverUrl: "http://localhost:1234",
-          password: "test",
-        },
-      });
-
-      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-      expect(body.reaction).toBe("-love");
-    });
-
-    it("uses custom partIndex when provided", async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        text: () => Promise.resolve(""),
-      });
-
-      await sendBlueBubblesReaction({
-        chatGuid: "chat-123",
-        messageGuid: "msg-123",
-        emoji: "laugh",
-        partIndex: 3,
-        opts: {
-          serverUrl: "http://localhost:1234",
-          password: "test",
-        },
-      });
-
-      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-      expect(body.partIndex).toBe(3);
-    });
-
-    it("throws on non-ok response", async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 400,
-        text: () => Promise.resolve("Invalid reaction type"),
-      });
-
-      await expect(
-        sendBlueBubblesReaction({
-          chatGuid: "chat-123",
-          messageGuid: "msg-123",
-          emoji: "like",
-          opts: {
-            serverUrl: "http://localhost:1234",
-            password: "test",
-          },
-        }),
-      ).rejects.toThrow("reaction failed (400): Invalid reaction type");
-    });
-
-    it("resolves credentials from config", async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        text: () => Promise.resolve(""),
-      });
-
-      await sendBlueBubblesReaction({
-        chatGuid: "chat-123",
-        messageGuid: "msg-123",
-        emoji: "emphasize",
-        opts: {
-          cfg: {
-            channels: {
-              bluebubbles: {
-                serverUrl: "http://react-server:7777",
-                password: "react-pass",
-              },
-            },
-          },
-        },
-      });
-
-      const calledUrl = mockFetch.mock.calls[0][0] as string;
-      expect(calledUrl).toContain("react-server:7777");
-      expect(calledUrl).toContain("password=react-pass");
-    });
-
-    it("trims chatGuid and messageGuid", async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        text: () => Promise.resolve(""),
-      });
-
-      await sendBlueBubblesReaction({
-        chatGuid: "  chat-with-spaces  ",
-        messageGuid: "  msg-with-spaces  ",
-        emoji: "question",
-        opts: {
-          serverUrl: "http://localhost:1234",
-          password: "test",
-        },
-      });
-
-      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-      expect(body.chatGuid).toBe("chat-with-spaces");
-      expect(body.selectedMessageGuid).toBe("msg-with-spaces");
-    });
-
-    describe("reaction removal aliases", () => {
-      it("handles emoji-based removal", async () => {
-        mockFetch.mockResolvedValueOnce({
-          ok: true,
-          text: () => Promise.resolve(""),
-        });
-
-        await sendBlueBubblesReaction({
-          chatGuid: "chat-123",
-          messageGuid: "msg-123",
-          emoji: "👍",
-          remove: true,
-          opts: {
-            serverUrl: "http://localhost:1234",
-            password: "test",
-          },
-        });
-
-        const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-        expect(body.reaction).toBe("-like");
+        expect(normalizeBlueBubblesReactionInput("👍", true)).toBe("-like");
       });
 
       it("handles text alias removal", async () => {
-        mockFetch.mockResolvedValueOnce({
-          ok: true,
-          text: () => Promise.resolve(""),
-        });
+        await withBlueBubblesOutboundEnabled(async () => {
+          mockFetch.mockResolvedValueOnce({
+            ok: true,
+            text: () => Promise.resolve(""),
+          });
 
-        await sendBlueBubblesReaction({
-          chatGuid: "chat-123",
-          messageGuid: "msg-123",
-          emoji: "haha",
-          remove: true,
-          opts: {
-            serverUrl: "http://localhost:1234",
-            password: "test",
-          },
-        });
+          await sendBlueBubblesReaction({
+            chatGuid: "chat-123",
+            messageGuid: "msg-123",
+            emoji: "haha",
+            remove: true,
+            opts: {
+              serverUrl: "http://localhost:1234",
+              password: "test",
+            },
+          });
 
-        const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-        expect(body.reaction).toBe("-laugh");
+          const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+          expect(body.reaction).toBe("-laugh");
+        });
+        expect(normalizeBlueBubblesReactionInput("haha", true)).toBe("-laugh");
       });
     });
   });

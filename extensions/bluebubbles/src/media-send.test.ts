@@ -6,6 +6,10 @@ import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sendBlueBubblesMedia } from "./media-send.js";
 import { setBlueBubblesRuntime } from "./runtime.js";
+import {
+  restoreBlueBubblesOutboundEnv,
+  withBlueBubblesOutboundEnabled,
+} from "./test-outbound-env.js";
 
 const sendBlueBubblesAttachmentMock = vi.hoisted(() => vi.fn());
 const sendMessageBlueBubblesMock = vi.hoisted(() => vi.fn());
@@ -82,6 +86,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  restoreBlueBubblesOutboundEnv();
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
     if (!dir) {
@@ -92,16 +97,33 @@ afterEach(async () => {
 });
 
 describe("sendBlueBubblesMedia local-path hardening", () => {
-  it("rejects local paths when mediaLocalRoots is not configured", async () => {
-    await expect(
-      sendBlueBubblesMedia({
-        cfg: createConfig(),
-        to: "chat:123",
-        mediaPath: "/etc/passwd",
-      }),
-    ).rejects.toThrow(/mediaLocalRoots/i);
-
+  async function expectMediaDisabled(params: Parameters<typeof sendBlueBubblesMedia>[0]) {
+    await expect(sendBlueBubblesMedia(params)).rejects.toThrow(
+      "OPENCLAW_BLUEBUBBLES_OUTBOUND_ENABLED",
+    );
     expect(sendBlueBubblesAttachmentMock).not.toHaveBeenCalled();
+    expect(sendMessageBlueBubblesMock).not.toHaveBeenCalled();
+  }
+
+  it("throws at outbound gate when flag unset", async () => {
+    await expectMediaDisabled({
+      cfg: createConfig(),
+      to: "chat:123",
+      mediaUrl: "https://example.com/file.png",
+    });
+  });
+
+  it("rejects local paths when mediaLocalRoots is not configured", async () => {
+    await withBlueBubblesOutboundEnabled(async () => {
+      await expect(
+        sendBlueBubblesMedia({
+          cfg: createConfig(),
+          to: "chat:123",
+          mediaPath: "/etc/passwd",
+        }),
+      ).rejects.toThrow("Local BlueBubbles media paths are disabled");
+      expect(sendBlueBubblesAttachmentMock).not.toHaveBeenCalled();
+    });
   });
 
   it("rejects local paths outside configured mediaLocalRoots", async () => {
@@ -110,15 +132,16 @@ describe("sendBlueBubblesMedia local-path hardening", () => {
     const outsideFile = path.join(outsideDir, "outside.txt");
     await fs.writeFile(outsideFile, "not allowed", "utf8");
 
-    await expect(
-      sendBlueBubblesMedia({
-        cfg: createConfig({ mediaLocalRoots: [allowedRoot] }),
-        to: "chat:123",
-        mediaPath: outsideFile,
-      }),
-    ).rejects.toThrow(/not under any configured mediaLocalRoots/i);
-
-    expect(sendBlueBubblesAttachmentMock).not.toHaveBeenCalled();
+    await withBlueBubblesOutboundEnabled(async () => {
+      await expect(
+        sendBlueBubblesMedia({
+          cfg: createConfig({ mediaLocalRoots: [allowedRoot] }),
+          to: "chat:123",
+          mediaPath: outsideFile,
+        }),
+      ).rejects.toThrow("not under any configured mediaLocalRoots");
+      expect(sendBlueBubblesAttachmentMock).not.toHaveBeenCalled();
+    });
   });
 
   it("allows local paths that are explicitly configured", async () => {
@@ -126,21 +149,23 @@ describe("sendBlueBubblesMedia local-path hardening", () => {
     const allowedFile = path.join(allowedRoot, "allowed.txt");
     await fs.writeFile(allowedFile, "allowed", "utf8");
 
-    const result = await sendBlueBubblesMedia({
-      cfg: createConfig({ mediaLocalRoots: [allowedRoot] }),
-      to: "chat:123",
-      mediaPath: allowedFile,
-    });
+    await withBlueBubblesOutboundEnabled(async () => {
+      await sendBlueBubblesMedia({
+        cfg: createConfig({ mediaLocalRoots: [allowedRoot] }),
+        to: "chat:123",
+        mediaPath: allowedFile,
+      });
 
-    expect(result).toEqual({ messageId: "msg-1" });
-    expect(sendBlueBubblesAttachmentMock).toHaveBeenCalledTimes(1);
-    expect(sendBlueBubblesAttachmentMock.mock.calls[0]?.[0]).toEqual(
-      expect.objectContaining({
-        filename: "allowed.txt",
-        contentType: "text/plain",
-      }),
-    );
-    expect(runtimeMocks.detectMime).toHaveBeenCalled();
+      expect(sendBlueBubblesAttachmentMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: "chat:123",
+          buffer: expect.any(Uint8Array),
+          filename: "allowed.txt",
+          contentType: "text/plain",
+        }),
+      );
+      expect(runtimeMocks.detectMime).toHaveBeenCalled();
+    });
   });
 
   it("allows file:// media paths and file:// local roots", async () => {
@@ -148,19 +173,21 @@ describe("sendBlueBubblesMedia local-path hardening", () => {
     const allowedFile = path.join(allowedRoot, "allowed.txt");
     await fs.writeFile(allowedFile, "allowed", "utf8");
 
-    const result = await sendBlueBubblesMedia({
-      cfg: createConfig({ mediaLocalRoots: [pathToFileURL(allowedRoot).toString()] }),
-      to: "chat:123",
-      mediaPath: pathToFileURL(allowedFile).toString(),
-    });
+    await withBlueBubblesOutboundEnabled(async () => {
+      await sendBlueBubblesMedia({
+        cfg: createConfig({ mediaLocalRoots: [pathToFileURL(allowedRoot).toString()] }),
+        to: "chat:123",
+        mediaPath: pathToFileURL(allowedFile).toString(),
+      });
 
-    expect(result).toEqual({ messageId: "msg-1" });
-    expect(sendBlueBubblesAttachmentMock).toHaveBeenCalledTimes(1);
-    expect(sendBlueBubblesAttachmentMock.mock.calls[0]?.[0]).toEqual(
-      expect.objectContaining({
-        filename: "allowed.txt",
-      }),
-    );
+      expect(sendBlueBubblesAttachmentMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: "chat:123",
+          filename: "allowed.txt",
+          contentType: "text/plain",
+        }),
+      );
+    });
   });
 
   it("uses account-specific mediaLocalRoots over top-level roots", async () => {
@@ -180,23 +207,32 @@ describe("sendBlueBubblesMedia local-path hardening", () => {
       },
     });
 
-    await expect(
-      sendBlueBubblesMedia({
+    await withBlueBubblesOutboundEnabled(async () => {
+      await expect(
+        sendBlueBubblesMedia({
+          cfg,
+          to: "chat:123",
+          accountId: "work",
+          mediaPath: baseFile,
+        }),
+      ).rejects.toThrow("not under any configured mediaLocalRoots");
+      expect(sendBlueBubblesAttachmentMock).not.toHaveBeenCalled();
+
+      await sendBlueBubblesMedia({
         cfg,
         to: "chat:123",
         accountId: "work",
-        mediaPath: baseFile,
-      }),
-    ).rejects.toThrow(/not under any configured mediaLocalRoots/i);
+        mediaPath: accountFile,
+      });
 
-    const result = await sendBlueBubblesMedia({
-      cfg,
-      to: "chat:123",
-      accountId: "work",
-      mediaPath: accountFile,
+      expect(sendBlueBubblesAttachmentMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: "chat:123",
+          filename: "account.txt",
+          opts: expect.objectContaining({ cfg, accountId: "work" }),
+        }),
+      );
     });
-
-    expect(result).toEqual({ messageId: "msg-1" });
   });
 
   it("rejects symlink escapes under an allowed root", async () => {
@@ -213,15 +249,16 @@ describe("sendBlueBubblesMedia local-path hardening", () => {
       return;
     }
 
-    await expect(
-      sendBlueBubblesMedia({
-        cfg: createConfig({ mediaLocalRoots: [allowedRoot] }),
-        to: "chat:123",
-        mediaPath: linkPath,
-      }),
-    ).rejects.toThrow(/not under any configured mediaLocalRoots/i);
-
-    expect(sendBlueBubblesAttachmentMock).not.toHaveBeenCalled();
+    await withBlueBubblesOutboundEnabled(async () => {
+      await expect(
+        sendBlueBubblesMedia({
+          cfg: createConfig({ mediaLocalRoots: [allowedRoot] }),
+          to: "chat:123",
+          mediaPath: linkPath,
+        }),
+      ).rejects.toThrow("not under any configured mediaLocalRoots");
+      expect(sendBlueBubblesAttachmentMock).not.toHaveBeenCalled();
+    });
   });
 
   it("rejects relative mediaLocalRoots entries", async () => {
@@ -230,27 +267,38 @@ describe("sendBlueBubblesMedia local-path hardening", () => {
     const relativeRoot = path.relative(process.cwd(), allowedRoot);
     await fs.writeFile(allowedFile, "allowed", "utf8");
 
-    await expect(
-      sendBlueBubblesMedia({
-        cfg: createConfig({ mediaLocalRoots: [relativeRoot] }),
-        to: "chat:123",
-        mediaPath: allowedFile,
-      }),
-    ).rejects.toThrow(/must be absolute paths/i);
-
-    expect(sendBlueBubblesAttachmentMock).not.toHaveBeenCalled();
+    await withBlueBubblesOutboundEnabled(async () => {
+      await expect(
+        sendBlueBubblesMedia({
+          cfg: createConfig({ mediaLocalRoots: [relativeRoot] }),
+          to: "chat:123",
+          mediaPath: allowedFile,
+        }),
+      ).rejects.toThrow("mediaLocalRoots entries must be absolute paths");
+      expect(sendBlueBubblesAttachmentMock).not.toHaveBeenCalled();
+    });
   });
 
   it("keeps remote URL flow unchanged", async () => {
-    await sendBlueBubblesMedia({
-      cfg: createConfig(),
-      to: "chat:123",
-      mediaUrl: "https://example.com/file.png",
-    });
+    await withBlueBubblesOutboundEnabled(async () => {
+      await sendBlueBubblesMedia({
+        cfg: createConfig(),
+        to: "chat:123",
+        mediaUrl: "https://example.com/file.png",
+      });
 
-    expect(runtimeMocks.fetchRemoteMedia).toHaveBeenCalledWith(
-      expect.objectContaining({ url: "https://example.com/file.png" }),
-    );
-    expect(sendBlueBubblesAttachmentMock).toHaveBeenCalledTimes(1);
+      expect(runtimeMocks.fetchRemoteMedia).toHaveBeenCalledWith(
+        expect.objectContaining({
+          url: "https://example.com/file.png",
+        }),
+      );
+      expect(sendBlueBubblesAttachmentMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: "chat:123",
+          filename: "remote.png",
+          contentType: "image/png",
+        }),
+      );
+    });
   });
 });
