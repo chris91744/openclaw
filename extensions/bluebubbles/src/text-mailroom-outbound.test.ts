@@ -143,6 +143,54 @@ describe("Text Mailroom outbound approvals", () => {
     });
   });
 
+  it("rechecks_campaign_send_limits_at_send_time", async () => {
+    const rootDir = await makeRoot();
+    let sentCount = 0;
+    const sender = vi.fn(async () => ({ messageId: `msg-${++sentCount}` }));
+    const campaign = await authorizeTextMailroomCampaign(
+      { rootDir },
+      {
+        purpose: "Limited campaign",
+        approvedBy: "Chris",
+        allowedRecipients: ["+15551234567", "+15557654321"],
+        maxSends: 1,
+      },
+    );
+    const first = await proposeTextMailroomOutbound(
+      { rootDir },
+      {
+        kind: "campaign_outreach",
+        recipient: "+15551234567",
+        body: "first",
+        campaignId: campaign.campaignId,
+        reason: "first authorized send",
+        source: "agent",
+      },
+    );
+    const second = await proposeTextMailroomOutbound(
+      { rootDir },
+      {
+        kind: "campaign_outreach",
+        recipient: "+15557654321",
+        body: "second",
+        campaignId: campaign.campaignId,
+        reason: "second authorized send",
+        source: "agent",
+      },
+    );
+    await approveTextMailroomOutbound({ rootDir }, { itemId: first.id, approvedBy: "Chris" });
+    await approveTextMailroomOutbound({ rootDir }, { itemId: second.id, approvedBy: "Chris" });
+
+    vi.stubEnv(TEXT_MAILROOM_SEND_OPTIN_ENV, "1");
+    await expect(
+      sendApprovedTextMailroomOutbound({ rootDir, sender }, { itemId: first.id }),
+    ).resolves.toMatchObject({ status: "sent" });
+    await expect(
+      sendApprovedTextMailroomOutbound({ rootDir, sender }, { itemId: second.id }),
+    ).rejects.toThrow("send limit reached");
+    expect(sender).toHaveBeenCalledTimes(1);
+  });
+
   it("fails_closed_when_body_changes_after_approval", async () => {
     const rootDir = await makeRoot();
     const sender = vi.fn(async () => ({ messageId: "msg-1" }));

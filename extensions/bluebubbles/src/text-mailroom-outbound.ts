@@ -295,6 +295,13 @@ export async function sendApprovedTextMailroomOutbound(
   try {
     const item = await loadRequiredOutbound(options, params.itemId);
     assertApprovedForSend(item, options);
+    if (item.campaignId) {
+      validateCampaignForRecipient(
+        await loadRequiredCampaign(options, item.campaignId),
+        item.recipientHash,
+        options,
+      );
+    }
     sending = { ...item, status: "sending" as const, updatedAt: textMailroomNow(options.now) };
     await writePrivateJson(outboundPath(options.rootDir, sending.id), sending);
     // Injected senders are for tests/adapters; the production default keeps BlueBubbles' own send gate.
