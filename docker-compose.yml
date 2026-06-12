@@ -178,8 +178,23 @@ services:
       - ${OPENCLAW_WORKSPACE_DIR}/prestigio:/data
       - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace:ro
       - ./prestigio-write-service/index.js:/app/index.js:ro
+      - ./prestigio-write-service/lib:/app/lib:ro
       - ${PRESTIGIO_APP_DIR:-/Users/chrisreyes/prestigio-app}/js/quote-plan-contracts.js:/app/quote-plan-contracts.js:ro
+      - ${PRESTIGIO_APP_DIR:-/Users/chrisreyes/prestigio-app}/js/quote-plan-handoff.js:/app/quote-plan-handoff.js:ro
+      - ${PRESTIGIO_APP_DIR:-/Users/chrisreyes/prestigio-app}/js/quote-fill-calculator.js:/app/quote-fill-calculator.js:ro
+      - ${PRESTIGIO_APP_DIR:-/Users/chrisreyes/prestigio-app}/js/categories/pillows.calc.js:/app/pillows-calc.js:ro
+      - ${PRESTIGIO_APP_DIR:-/Users/chrisreyes/prestigio-app}/js/categories/cushions.calc.js:/app/cushions-calc.js:ro
+      - ${PRESTIGIO_APP_DIR:-/Users/chrisreyes/prestigio-app}/js/categories/reupholstery.calc.js:/app/reupholstery-calc.js:ro
+      - ${PRESTIGIO_APP_DIR:-/Users/chrisreyes/prestigio-app}/js/categories/restuffing.calc.js:/app/restuffing-calc.js:ro
+      - ${PRESTIGIO_APP_DIR:-/Users/chrisreyes/prestigio-app}/js/categories/patio.calc.js:/app/patio-calc.js:ro
+      - ${PRESTIGIO_APP_DIR:-/Users/chrisreyes/prestigio-app}/js/categories/softgoods.calc.js:/app/softgoods-calc.js:ro
+      - ${PRESTIGIO_APP_DIR:-/Users/chrisreyes/prestigio-app}/js/categories/ottoman.calc.js:/app/ottoman-calc.js:ro
+      - ${PRESTIGIO_APP_DIR:-/Users/chrisreyes/prestigio-app}/js/categories/bed.calc.js:/app/bed-calc.js:ro
+      - ${PRESTIGIO_APP_DIR:-/Users/chrisreyes/prestigio-app}/js/categories/seating.calc.js:/app/seating-calc.js:ro
       - ${PRESTIGIO_APP_DIR:-/Users/chrisreyes/prestigio-app}/js/quote-description-generators.js:/app/quote-description-generators.js:ro
+      - ${PRESTIGIO_APP_DIR:-/Users/chrisreyes/prestigio-app}/js/quote-intake/payload-gate/index.cjs:/app/payload-gate/index.cjs:ro
+      - ${PRESTIGIO_APP_DIR:-/Users/chrisreyes/prestigio-app}/js/quote-intake/payload-gate/category-rules.cjs:/app/payload-gate/category-rules.cjs:ro
+      - ${PRESTIGIO_APP_DIR:-/Users/chrisreyes/prestigio-app}/js/quote-intake/payload-gate/surface.json:/app/payload-gate/surface.json:ro
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:3006/health"]
       interval: 30s

@@ -8,6 +8,8 @@ const SHARED_DESCRIPTION_GENERATOR_PATH =
   process.env.QUOTE_DESCRIPTION_GENERATORS_PATH || '/app/quote-description-generators.js';
 const SHARED_QUOTE_PLAN_CONTRACTS_PATH =
   process.env.QUOTE_PLAN_CONTRACTS_PATH || '/app/quote-plan-contracts.js';
+const SHARED_QUOTE_PLAN_HANDOFF_PATH =
+  process.env.QUOTE_PLAN_HANDOFF_PATH || '/app/quote-plan-handoff.js';
 
 function resolveSharedModulePath(configuredPath) {
   if (fs.existsSync(configuredPath)) {
@@ -43,6 +45,10 @@ function loadSharedModule(configuredPath, globalName) {
 const quotePlanContracts = loadSharedModule(
   SHARED_QUOTE_PLAN_CONTRACTS_PATH,
   'QuotePlanContracts',
+);
+const quotePlanHandoff = loadSharedModule(
+  SHARED_QUOTE_PLAN_HANDOFF_PATH,
+  'QuotePlanHandoff',
 );
 const quoteFillCalculator = loadSharedModule(
   SHARED_FILL_CALCULATOR_PATH,
@@ -109,6 +115,10 @@ if (!quotePlanContracts || typeof quotePlanContracts.isQuoteDescriptionAffecting
   throw new Error(`Unable to load quote plan contracts from ${SHARED_QUOTE_PLAN_CONTRACTS_PATH}`);
 }
 
+if (!quotePlanHandoff || typeof quotePlanHandoff.buildQuotedPlanSnapshot !== 'function') {
+  throw new Error(`Unable to load quote plan handoff helpers from ${SHARED_QUOTE_PLAN_HANDOFF_PATH}`);
+}
+
 if (!quoteFillCalculator || typeof quoteFillCalculator.calculatePillowFill !== 'function') {
   throw new Error(`Unable to load quote fill calculator from ${SHARED_FILL_CALCULATOR_PATH}`);
 }
@@ -160,6 +170,7 @@ if (!seatingCalc || typeof seatingCalc.compileSeatingFromFormData !== 'function'
 
 module.exports = {
   quotePlanContracts,
+  quotePlanHandoff,
   quoteFillCalculator,
   quoteDescriptionGenerators,
   pillowCalc,
