@@ -200,6 +200,14 @@ const entries: SubCliEntry[] = [
     },
   },
   {
+    name: "text-mailroom",
+    description: "Supervised SMS/iMessage mailroom queue",
+    register: async (program) => {
+      const mod = await import("../text-mailroom-cli.js");
+      mod.registerTextMailroomCli(program);
+    },
+  },
+  {
     name: "directory",
     description: "Directory commands",
     register: async (program) => {
