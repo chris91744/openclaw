@@ -476,6 +476,30 @@ describe("text-mailroom cli", () => {
     expect(output).not.toContain("+15557654321");
   });
 
+  it("contacts_upsert_rejects_invalid_labels", async () => {
+    const root = await makeRoot();
+    const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
+
+    await expect(
+      runCli([
+        "text-mailroom",
+        "--root",
+        root,
+        "contacts",
+        "upsert",
+        "--phone",
+        "+15551234567",
+        "--name",
+        "Invalid Label Contact",
+        "--labels",
+        "vendor,vip",
+      ]),
+    ).rejects.toThrow("contact label is invalid: vip");
+
+    await runCli(["text-mailroom", "--root", root, "contacts", "list"]);
+    expect(String(log.mock.calls.at(-1)?.[0])).toBe("No Text Mailroom contacts.");
+  });
+
   it("request_send_rejects_conflicting_to_and_contact_id", async () => {
     const root = await makeRoot();
     const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});

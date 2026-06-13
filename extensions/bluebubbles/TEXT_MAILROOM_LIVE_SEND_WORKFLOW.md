@@ -55,6 +55,7 @@ This packet documents the branch that moves Text Mailroom from a safe queue foun
 5. Safer operator lookup helpers
    - `openclaw text-mailroom contacts list` lists contact ids, labels, and names without raw phone numbers.
    - `openclaw text-mailroom contacts search <query>` narrows saved contact matches without raw phone numbers.
+   - Contact labels are runtime-validated and invalid labels fail before saving.
    - `openclaw text-mailroom campaigns list` lists campaign ids, purposes, and send counts without raw recipients.
    - `request-send --campaign-id ... --kind campaign_outreach` reuses existing campaign recipient/cap/expiry checks.
 
@@ -84,6 +85,7 @@ This packet documents the branch that moves Text Mailroom from a safe queue foun
 - `enable-bluebubbles-ingest` dry-runs by default and its summary redacts BlueBubbles server URLs, passwords, and allowlisted recipients.
 - Campaign sends are still bounded by allowed recipient hashes, expiry, max sends, and campaign send locks.
 - List/search commands avoid raw phone numbers and message bodies.
+- Contact labels are limited to `known`, `vendor`, `client`, `lead`, `personal`, `unknown`, and `blocked`.
 
 ## Verification To Run
 
@@ -97,7 +99,7 @@ Focused:
   extensions/bluebubbles/src/text-mailroom-outbound.test.ts
 ```
 
-Latest result: 4 files / 100 tests passed.
+Latest result: 4 files / 102 tests passed.
 
 Broader:
 
@@ -110,7 +112,7 @@ Broader:
   src/config/config.plugin-validation.test.ts
 ```
 
-Latest result: 17 files / 341 tests passed.
+Latest result: 17 files / 343 tests passed.
 
 Format:
 

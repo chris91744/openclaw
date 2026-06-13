@@ -75,6 +75,15 @@ type ProposalInput = {
 };
 
 const DEFAULT_MAX_APPROVAL_AGE_MS = 6 * 60 * 60 * 1000;
+const VALID_CONTACT_LABELS = new Set<TextMailroomContactLabel>([
+  "blocked",
+  "client",
+  "known",
+  "lead",
+  "personal",
+  "unknown",
+  "vendor",
+]);
 
 export async function upsertTextMailroomContact(
   options: TextMailroomStoreOptions,
@@ -661,9 +670,14 @@ function validateCampaignForRecipient(
 }
 
 function normalizeLabels(labels: TextMailroomContactLabel[]): TextMailroomContactLabel[] {
-  return Array.from(
-    new Set<TextMailroomContactLabel>(labels.length > 0 ? labels : ["unknown"]),
-  ).sort();
+  const normalized =
+    labels.length > 0 ? labels : (["unknown"] satisfies TextMailroomContactLabel[]);
+  for (const label of normalized) {
+    if (!VALID_CONTACT_LABELS.has(label)) {
+      throw new Error(`Text Mailroom contact label is invalid: ${label}`);
+    }
+  }
+  return Array.from(new Set<TextMailroomContactLabel>(normalized)).sort();
 }
 
 function inferOutboundRisk(

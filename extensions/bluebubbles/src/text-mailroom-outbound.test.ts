@@ -105,6 +105,21 @@ describe("Text Mailroom outbound approvals", () => {
     ).rejects.toThrow("blocked contacts");
   });
 
+  it("rejects_invalid_contact_labels_before_saving", async () => {
+    const rootDir = await makeRoot();
+
+    await expect(
+      upsertTextMailroomContact(
+        { rootDir },
+        {
+          phone: "+15551234567",
+          labels: ["vendor", "vip" as never],
+          source: "manual",
+        },
+      ),
+    ).rejects.toThrow("contact label is invalid: vip");
+  });
+
   it("infers_risk_from_contact_labels_and_message_kind", async () => {
     const rootDir = await makeRoot();
     await upsertTextMailroomContact(

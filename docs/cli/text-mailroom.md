@@ -154,6 +154,8 @@ openclaw text-mailroom contacts upsert \
   --source "craigslist"
 ```
 
+Allowed labels are `known`, `vendor`, `client`, `lead`, `personal`, `unknown`, and `blocked`; invalid labels fail before saving.
+
 List contacts without raw phone numbers:
 
 ```bash
