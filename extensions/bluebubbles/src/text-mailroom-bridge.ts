@@ -104,6 +104,9 @@ export async function recordBlueBubblesTextMailroomInbound(params: {
         threadId,
         receivedAt: formatReceivedAt(message.timestamp),
         source: "bluebubbles-webhook",
+        providerMessageId: message.messageId
+          ? `bluebubbles:${account.accountId}:${message.messageId}`
+          : undefined,
       },
     );
     if (account.config.textMailroom?.autoClassify !== false) {

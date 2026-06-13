@@ -30,6 +30,8 @@ async function runCli(args: string[]) {
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
   await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
 });
 
@@ -1272,5 +1274,232 @@ describe("text-mailroom cli", () => {
     expect(output).toContain("Recorded inbound client-thread");
     expect(output).toContain("Classified client-thread");
     expect(output).toContain("reply client-thread");
+  });
+
+  it("inbox_digest_json_omits_body_derived_summary", async () => {
+    const root = await makeRoot();
+    const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
+
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "inbox",
+      "record",
+      "--from",
+      "+15551234567",
+      "--body",
+      "Secret digest JSON body",
+      "--thread-id",
+      "digest-thread",
+    ]);
+    log.mockClear();
+    await runCli(["text-mailroom", "--root", root, "--json", "inbox", "digest"]);
+
+    const digest = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as Array<{ summary?: string }>;
+    expect(digest[0]).not.toHaveProperty("summary");
+    expect(JSON.stringify(digest)).not.toContain("Secret digest JSON body");
+    expect(JSON.stringify(digest)).not.toContain("+15551234567");
+  });
+
+  it("scan_history_defaults_to_redacted_dry_run_without_writing_inbox", async () => {
+    const root = await makeRoot();
+    const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
+    vi.stubEnv("BLUEBUBBLES_TEST_PASSWORD", "secret-password");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              data: [
+                {
+                  guid: "history-msg-1",
+                  text: "Can you mount the TV tomorrow?",
+                  isFromMe: false,
+                  dateCreated: "2026-06-12T10:00:00.000Z",
+                  handle: { address: "+15551234567" },
+                  chat: { guid: "SMS;-;+15551234567", isGroup: false },
+                },
+              ],
+            }),
+            { status: 200 },
+          ),
+      ),
+    );
+
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "--json",
+      "scan-history",
+      "--server-url",
+      "http://bluebubbles.local:1234",
+      "--password-env",
+      "BLUEBUBBLES_TEST_PASSWORD",
+      "--since",
+      "2026-06-01T00:00:00.000Z",
+      "--until",
+      "2026-06-12T12:00:00.000Z",
+    ]);
+
+    const summary = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as {
+      mode: string;
+      candidates: unknown[];
+    };
+    expect(summary.mode).toBe("dry-run");
+    expect(summary.candidates).toHaveLength(1);
+    expect(JSON.stringify(summary)).not.toContain("+15551234567");
+    expect(JSON.stringify(summary)).not.toContain("mount the TV");
+
+    await runCli(["text-mailroom", "--root", root, "--json", "health"]);
+    const health = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as Awaited<
+      ReturnType<typeof buildTextMailroomOperationalHealth>
+    >;
+    expect(health.counts.inboxThreads).toBe(0);
+  });
+
+  it("probe_history_reports_shape_without_raw_phone_body_or_url", async () => {
+    const root = await makeRoot();
+    const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
+    vi.stubEnv("BLUEBUBBLES_TEST_PASSWORD", "secret-password");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              data: [
+                {
+                  guid: "probe-msg-1",
+                  text: "Secret probe body",
+                  isFromMe: false,
+                  dateCreated: "2026-06-12T10:00:00.000Z",
+                  handle: { address: "+15551234567" },
+                  chat: { guid: "SMS;-;+15551234567", isGroup: false },
+                },
+              ],
+            }),
+            { status: 200 },
+          ),
+      ),
+    );
+
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "--json",
+      "probe-history",
+      "--server-url",
+      "http://bluebubbles.local:1234",
+      "--password-env",
+      "BLUEBUBBLES_TEST_PASSWORD",
+      "--since",
+      "2026-06-01T00:00:00.000Z",
+      "--until",
+      "2026-06-12T12:00:00.000Z",
+    ]);
+
+    const probe = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as {
+      ok: boolean;
+      returnedCount: number;
+      normalizedCount: number;
+    };
+    const serialized = JSON.stringify(probe);
+    expect(probe.ok).toBe(true);
+    expect(probe.returnedCount).toBe(1);
+    expect(probe.normalizedCount).toBe(1);
+    expect(serialized).not.toContain("+15551234567");
+    expect(serialized).not.toContain("Secret probe body");
+    expect(serialized).not.toContain("bluebubbles.local");
+    expect(serialized).not.toContain("secret-password");
+  });
+
+  it("scan_history_apply_requires_confirmation_before_fetching", async () => {
+    const root = await makeRoot();
+    vi.stubEnv("BLUEBUBBLES_TEST_PASSWORD", "secret-password");
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ data: [] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(
+      runCli([
+        "text-mailroom",
+        "--root",
+        root,
+        "scan-history",
+        "--server-url",
+        "http://bluebubbles.local:1234",
+        "--password-env",
+        "BLUEBUBBLES_TEST_PASSWORD",
+        "--apply",
+      ]),
+    ).rejects.toThrow("Refusing to import history without --confirm-import");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("scan_history_confirmed_import_is_idempotent", async () => {
+    const root = await makeRoot();
+    const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
+    vi.stubEnv("BLUEBUBBLES_TEST_PASSWORD", "secret-password");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              data: [
+                {
+                  guid: "history-msg-1",
+                  text: "Can you send the estimate today?",
+                  isFromMe: false,
+                  dateCreated: "2026-06-12T10:00:00.000Z",
+                  handle: { address: "+15551234567" },
+                  chat: { guid: "SMS;-;+15551234567", isGroup: false },
+                },
+              ],
+            }),
+            { status: 200 },
+          ),
+      ),
+    );
+    const args = [
+      "text-mailroom",
+      "--root",
+      root,
+      "--json",
+      "scan-history",
+      "--server-url",
+      "http://bluebubbles.local:1234",
+      "--password-env",
+      "BLUEBUBBLES_TEST_PASSWORD",
+      "--since",
+      "2026-06-01T00:00:00.000Z",
+      "--until",
+      "2026-06-12T12:00:00.000Z",
+      "--apply",
+      "--confirm-import",
+    ];
+
+    await runCli(args);
+    const first = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as {
+      imported: number;
+      alreadyImported: number;
+    };
+    await runCli(args);
+    const second = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as {
+      imported: number;
+      alreadyImported: number;
+    };
+
+    expect(first.imported).toBe(1);
+    expect(second.imported).toBe(0);
+    expect(second.alreadyImported).toBe(1);
+    await runCli(["text-mailroom", "--root", root, "--json", "health"]);
+    const health = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as Awaited<
+      ReturnType<typeof buildTextMailroomOperationalHealth>
+    >;
+    expect(health.counts.inboxThreads).toBe(1);
   });
 });

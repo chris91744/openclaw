@@ -242,6 +242,28 @@ openclaw text-mailroom inbox classify client-thread
 openclaw text-mailroom inbox digest
 ```
 
+Probe BlueBubbles history support without printing message bodies, phone numbers, server URLs, or passwords:
+
+```bash
+openclaw text-mailroom probe-history
+```
+
+Scan recent BlueBubbles-indexed direct-message history for loose threads. This is dry-run by default and prints only counts, safe thread ids, priorities, reasons, tags, and timestamps:
+
+```bash
+openclaw text-mailroom scan-history
+```
+
+Defaults: last 14 days, direct messages only, group chats excluded, no imports, no drafts, and no sends. Texts unavailable to BlueBubbles are not scanned.
+
+Import candidates into the local inbox only after reviewing the dry-run summary:
+
+```bash
+openclaw text-mailroom scan-history --apply --confirm-import
+```
+
+Imported candidates are tagged with `source="history-scan"` internally and deduped by BlueBubbles provider message id so repeated scans do not append duplicates. The scan path does not set `OPENCLAW_TEXT_MAILROOM_SEND_OPTIN` or `OPENCLAW_BLUEBUBBLES_OUTBOUND_ENABLED`.
+
 Hold, close, or reopen a thread:
 
 ```bash

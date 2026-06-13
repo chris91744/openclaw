@@ -109,6 +109,52 @@ describe("Text Mailroom inbox, follow-ups, and integration signals", () => {
     expect(reply.risk).toBe("low");
   });
 
+  it("dedupes_inbound_messages_by_provider_message_id", async () => {
+    const rootDir = await makeRoot();
+    const input = {
+      sender: "+15551234567",
+      body: "Can you come by tomorrow?",
+      threadId: "dedupe-thread",
+      receivedAt: "2026-06-12T10:00:00.000Z",
+      providerMessageId: "bluebubbles:default:message-guid-1",
+      source: "bluebubbles-webhook",
+    };
+
+    const first = await recordTextMailroomInbound({ rootDir }, input);
+    const second = await recordTextMailroomInbound({ rootDir }, input);
+
+    expect(first.messages).toHaveLength(1);
+    expect(second.messages).toHaveLength(1);
+    expect(second.messages[0]?.providerMessageId).toBe("bluebubbles:default:message-guid-1");
+  });
+
+  it("fails_closed_on_provider_message_id_collision", async () => {
+    const rootDir = await makeRoot();
+    await recordTextMailroomInbound(
+      { rootDir },
+      {
+        sender: "+15551234567",
+        body: "Original body",
+        threadId: "collision-thread",
+        receivedAt: "2026-06-12T10:00:00.000Z",
+        providerMessageId: "bluebubbles:default:message-guid-1",
+      },
+    );
+
+    await expect(
+      recordTextMailroomInbound(
+        { rootDir },
+        {
+          sender: "+15551234567",
+          body: "Changed body",
+          threadId: "collision-thread",
+          receivedAt: "2026-06-12T10:00:00.000Z",
+          providerMessageId: "bluebubbles:default:message-guid-1",
+        },
+      ),
+    ).rejects.toThrow("provider message id collision");
+  });
+
   it("detects_and_dedupes_campaign_followups_when_no_reply_arrived", async () => {
     const rootDir = await makeRoot();
     const sender = vi.fn(async () => ({ messageId: "msg-1" }));
