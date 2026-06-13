@@ -414,6 +414,64 @@ describe("text-mailroom cli", () => {
     expect(output).not.toContain("Secret contact-name body");
   });
 
+  it("contacts_search_returns_safe_matching_contact_summaries", async () => {
+    const root = await makeRoot();
+    const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
+
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "contacts",
+      "upsert",
+      "--phone",
+      "+15551234567",
+      "--name",
+      "Marina Handyman",
+      "--labels",
+      "lead,vendor",
+      "--source",
+      "craigslist",
+    ]);
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "contacts",
+      "upsert",
+      "--phone",
+      "+15557654321",
+      "--name",
+      "Window Installer",
+      "--labels",
+      "vendor",
+      "--source",
+      "referral",
+    ]);
+    log.mockClear();
+
+    await runCli(["text-mailroom", "--root", root, "--json", "contacts", "search", "marina"]);
+    const results = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as Array<{
+      contactId: string;
+      displayName?: string;
+      labels: string[];
+      phone?: string;
+    }>;
+    expect(results).toHaveLength(1);
+    expect(results[0]?.displayName).toBe("Marina Handyman");
+    expect(results[0]?.labels).toEqual(["lead", "vendor"]);
+    expect(results[0]).not.toHaveProperty("phone");
+
+    log.mockClear();
+    await runCli(["text-mailroom", "--root", root, "contacts", "search", "vendor"]);
+    const output = log.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("Marina Handyman");
+    expect(output).toContain("Window Installer");
+    expect(output).toContain("lead,vendor");
+    expect(output).not.toContain("+15551234567");
+    expect(output).not.toContain("+15557654321");
+  });
+
   it("request_send_rejects_conflicting_to_and_contact_id", async () => {
     const root = await makeRoot();
     const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});

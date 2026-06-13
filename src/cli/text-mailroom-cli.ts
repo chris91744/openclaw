@@ -354,6 +354,25 @@ async function resolveSingleContactByQuery(params: {
   return matches[0]!;
 }
 
+async function searchContactsByQuery(params: {
+  rootDir: string;
+  query: string;
+}): Promise<Awaited<ReturnType<typeof listTextMailroomContacts>>> {
+  const needle = normalizeContactQuery(params.query);
+  if (!needle) {
+    throw new Error("Text Mailroom contact search query is required");
+  }
+  const contacts = await listTextMailroomContacts({ rootDir: params.rootDir });
+  return contacts.filter((contact) => {
+    return [
+      contact.contactId,
+      contact.displayName ?? "",
+      ...contact.labels,
+      contact.source ?? "",
+    ].some((value) => normalizeContactQuery(value).includes(needle));
+  });
+}
+
 function normalizeContactQuery(value: string): string {
   return value.trim().replace(/\s+/g, " ").toLowerCase();
 }
@@ -831,6 +850,26 @@ export function registerTextMailroomCli(program: Command) {
               )
               .join("\n")
           : "No Text Mailroom contacts.",
+      );
+    });
+
+  contacts
+    .command("search")
+    .argument("<query>")
+    .description("Search contacts without raw phone numbers")
+    .action(async (query: string) => {
+      const contacts = await searchContactsByQuery({ rootDir: resolveRoot(root), query });
+      output(
+        root,
+        contacts.map(summarizeContact),
+        contacts.length
+          ? contacts
+              .map(
+                (contact) =>
+                  `${contact.contactId} ${(contact.displayName ?? "").padEnd(20)} ${contact.labels.join(",")}`,
+              )
+              .join("\n")
+          : "No Text Mailroom contacts matched.",
       );
     });
 

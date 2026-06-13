@@ -160,6 +160,12 @@ List contacts without raw phone numbers:
 openclaw text-mailroom contacts list
 ```
 
+Search saved contacts without raw phone numbers:
+
+```bash
+openclaw text-mailroom contacts search "marina handyman"
+```
+
 Authorize a bounded outreach campaign:
 
 ```bash
