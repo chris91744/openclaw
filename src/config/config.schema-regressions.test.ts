@@ -36,4 +36,46 @@ describe("config schema regressions", () => {
 
     expect(res.ok).toBe(true);
   });
+
+  it("accepts deprecated local config keys without invalidating startup config", () => {
+    const res = validateConfigObject({
+      gateway: { mode: "local" },
+      agents: {
+        defaults: {
+          models: {
+            "openai/gpt-5.4": {
+              agentRuntime: { id: "codex" },
+            },
+          },
+        },
+        list: [
+          {
+            id: "main",
+            models: {
+              "openai/gpt-5.3-codex": {
+                agentRuntime: { id: "codex" },
+              },
+            },
+          },
+        ],
+      },
+      messages: {
+        groupChat: {
+          visibleReplies: "compact",
+        },
+      },
+      channels: {
+        telegram: {
+          streaming: { mode: "block", block: {}, preview: false },
+          accounts: {
+            default: {
+              streaming: { mode: "block", block: {}, preview: false },
+            },
+          },
+        },
+      },
+    });
+
+    expect(res.ok).toBe(true);
+  });
 });

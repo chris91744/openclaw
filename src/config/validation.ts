@@ -325,7 +325,7 @@ function validateConfigObjectWithPluginsBase(
   if (entries && isRecord(entries)) {
     for (const pluginId of Object.keys(entries)) {
       if (!knownIds.has(pluginId)) {
-        issues.push({
+        warnings.push({
           path: `plugins.entries.${pluginId}`,
           message: `plugin not found: ${pluginId}`,
         });
