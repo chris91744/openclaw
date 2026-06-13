@@ -43,6 +43,7 @@ This packet documents the branch that moves Text Mailroom from a safe queue foun
    - Default behavior queues only.
    - Safe summaries include the thread id and risk, but not the raw sender or body.
    - Supports `--request-id <id>` for retry-safe reply drafting.
+   - Refuses held, closed, or do-not-contact threads before queueing.
    - High-risk replies require `--confirm-high-risk` before approval.
    - `--send` requires `--approve-by` and `--confirm-send`, then still hits the same env gates.
 
@@ -76,7 +77,7 @@ This packet documents the branch that moves Text Mailroom from a safe queue foun
 - `request-send --contact-id` and `request-send --contact` resolve stored contacts internally and keep list/request summaries redacted.
 - Ambiguous `request-send --contact` lookups refuse before queueing.
 - Omitted risk is inferred in the queue layer, not just the CLI, and explicit `--risk` can only make the stored risk stricter.
-- `request-reply` resolves recipients from stored threads and refuses missing `--confirm-send` before queueing any send attempt.
+- `request-reply` resolves recipients from stored threads, refuses held/closed/do-not-contact threads, and refuses missing `--confirm-send` before queueing any send attempt.
 - High-risk approval is enforced in the shared approval layer, so CLI and future callers must explicitly confirm high-risk drafts before approval.
 - Idempotency is enforced in the shared proposal layer: same `requestId` plus same payload returns the existing item, while same `requestId` plus different recipient/body/kind fails closed.
 - `text-mailroom status` redacts BlueBubbles server URLs, passwords, raw phone numbers, and message bodies.
@@ -96,7 +97,7 @@ Focused:
   extensions/bluebubbles/src/text-mailroom-outbound.test.ts
 ```
 
-Latest result: 4 files / 98 tests passed.
+Latest result: 4 files / 100 tests passed.
 
 Broader:
 
@@ -109,7 +110,7 @@ Broader:
   src/config/config.plugin-validation.test.ts
 ```
 
-Latest result: 17 files / 339 tests passed.
+Latest result: 17 files / 341 tests passed.
 
 Format:
 

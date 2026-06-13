@@ -26,6 +26,7 @@ import {
 import {
   TEXT_MAILROOM_SEND_OPTIN_ENV,
   type TextMailroomContactLabel,
+  type TextMailroomThread,
   type TextMailroomOutboundKind,
   type TextMailroomRisk,
 } from "../../extensions/bluebubbles/src/text-mailroom-types.js";
@@ -443,6 +444,20 @@ function summarizeCampaign(
   };
 }
 
+function assertThreadReplyAllowed(thread: TextMailroomThread): void {
+  if (thread.status !== "open") {
+    throw new Error(`Text Mailroom refuses to queue replies to ${thread.status} threads`);
+  }
+  if (thread.tags.includes("do_not_contact") || latestThreadBodyBlocksReply(thread)) {
+    throw new Error("Text Mailroom refuses to queue replies to do_not_contact threads");
+  }
+}
+
+function latestThreadBodyBlocksReply(thread: TextMailroomThread): boolean {
+  const latestBody = thread.messages.at(-1)?.body.toLowerCase() ?? "";
+  return /\b(stop|unsubscribe|wrong number)\b/.test(latestBody);
+}
+
 export function registerTextMailroomCli(program: Command) {
   const root = program
     .command("text-mailroom")
@@ -747,6 +762,7 @@ export function registerTextMailroomCli(program: Command) {
         if (!thread) {
           throw new Error("Text Mailroom thread not found");
         }
+        assertThreadReplyAllowed(thread);
         let item = await proposeTextMailroomOutbound(
           { rootDir },
           {

@@ -3,6 +3,10 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  safeFileStem,
+  textMailroomPaths,
+} from "../../extensions/bluebubbles/src/text-mailroom-store.js";
 import { defaultRuntime } from "../runtime.js";
 import {
   buildBlueBubblesTextMailroomConfig,
@@ -690,6 +694,84 @@ describe("text-mailroom cli", () => {
     expect(output).not.toContain("+15551234567");
     expect(output).not.toContain("Secret inbound body");
     expect(output).not.toContain("Secret reply body");
+  });
+
+  it("request_reply_refuses_do_not_contact_threads_before_queueing", async () => {
+    const root = await makeRoot();
+    const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
+
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "inbox",
+      "record",
+      "--from",
+      "+15551234567",
+      "--body",
+      "Stop texting this number",
+      "--thread-id",
+      "stop-thread",
+    ]);
+    await expect(
+      runCli([
+        "text-mailroom",
+        "--root",
+        root,
+        "request-reply",
+        "stop-thread",
+        "--body",
+        "Sorry",
+        "--reason",
+        "blocked reply smoke",
+      ]),
+    ).rejects.toThrow("do_not_contact threads");
+
+    await runCli(["text-mailroom", "--root", root, "list"]);
+    expect(String(log.mock.calls.at(-1)?.[0])).toBe("No outbound queue items.");
+  });
+
+  it("request_reply_refuses_closed_threads_before_queueing", async () => {
+    const root = await makeRoot();
+    const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
+    const threadId = "closed-thread";
+
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "inbox",
+      "record",
+      "--from",
+      "+15551234567",
+      "--body",
+      "hello",
+      "--thread-id",
+      threadId,
+    ]);
+    const threadPath = path.join(
+      textMailroomPaths(root).inboxThreads,
+      `${safeFileStem(threadId)}.json`,
+    );
+    const thread = JSON.parse(await fs.readFile(threadPath, "utf8")) as { status: string };
+    await fs.writeFile(threadPath, JSON.stringify({ ...thread, status: "closed" }, null, 2));
+
+    await expect(
+      runCli([
+        "text-mailroom",
+        "--root",
+        root,
+        "request-reply",
+        threadId,
+        "--body",
+        "hello back",
+        "--reason",
+        "closed reply smoke",
+      ]),
+    ).rejects.toThrow("closed threads");
+
+    await runCli(["text-mailroom", "--root", root, "list"]);
+    expect(String(log.mock.calls.at(-1)?.[0])).toBe("No outbound queue items.");
   });
 
   it("request_reply_refuses_send_without_confirm_before_queueing", async () => {
