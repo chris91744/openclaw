@@ -291,11 +291,13 @@ export async function sendApprovedTextMailroomOutbound(
 ): Promise<TextMailroomOutboundItem> {
   assertTextMailroomSendOptIn();
   const releaseClaim = await acquireOutboundSendClaim(options, params.itemId);
+  let releaseCampaignClaim: (() => Promise<void>) | null = null;
   let sending: TextMailroomOutboundItem | null = null;
   try {
     const item = await loadRequiredOutbound(options, params.itemId);
     assertApprovedForSend(item, options);
     if (item.campaignId) {
+      releaseCampaignClaim = await acquireCampaignSendClaim(options, item.campaignId);
       validateCampaignForRecipient(
         await loadRequiredCampaign(options, item.campaignId),
         item.recipientHash,
@@ -360,7 +362,11 @@ export async function sendApprovedTextMailroomOutbound(
     });
     throw error;
   } finally {
-    await releaseClaim();
+    try {
+      await releaseCampaignClaim?.();
+    } finally {
+      await releaseClaim();
+    }
   }
 }
 
@@ -435,6 +441,38 @@ async function acquireOutboundSendClaim(
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "EEXIST") {
       throw new Error("Text Mailroom outbound item is already claimed for sending");
+    }
+    throw error;
+  } finally {
+    await handle?.close();
+  }
+  return async () => {
+    await fs.unlink(filePath).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOENT") {
+        throw error;
+      }
+    });
+  };
+}
+
+async function acquireCampaignSendClaim(
+  options: TextMailroomStoreOptions,
+  campaignId: string,
+): Promise<() => Promise<void>> {
+  const dir = textMailroomPaths(options.rootDir).outboundClaims;
+  await ensurePrivateDir(dir);
+  const filePath = path.join(dir, `campaign-${safeFileStem(campaignId)}.lock`);
+  let handle: fs.FileHandle | null = null;
+  try {
+    handle = await fs.open(filePath, "wx", 0o600);
+    await handle.writeFile(
+      `${JSON.stringify({ campaignId, claimedAt: textMailroomNow(options.now) })}\n`,
+      "utf8",
+    );
+    await handle.chmod(0o600);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new Error("Text Mailroom campaign is already claimed for sending");
     }
     throw error;
   } finally {

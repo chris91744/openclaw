@@ -191,6 +191,60 @@ describe("Text Mailroom outbound approvals", () => {
     expect(sender).toHaveBeenCalledTimes(1);
   });
 
+  it("serializes_campaign_sends_so_concurrent_items_do_not_exceed_the_limit", async () => {
+    const rootDir = await makeRoot();
+    let releaseSender: ((value: { messageId: string }) => void) | undefined;
+    const sender = vi.fn(
+      () =>
+        new Promise<{ messageId: string }>((resolve) => {
+          releaseSender = resolve;
+        }),
+    );
+    const campaign = await authorizeTextMailroomCampaign(
+      { rootDir },
+      {
+        purpose: "Limited campaign",
+        approvedBy: "Chris",
+        allowedRecipients: ["+15551234567", "+15557654321"],
+        maxSends: 1,
+      },
+    );
+    const first = await proposeTextMailroomOutbound(
+      { rootDir },
+      {
+        kind: "campaign_outreach",
+        recipient: "+15551234567",
+        body: "first",
+        campaignId: campaign.campaignId,
+        reason: "first authorized send",
+        source: "agent",
+      },
+    );
+    const second = await proposeTextMailroomOutbound(
+      { rootDir },
+      {
+        kind: "campaign_outreach",
+        recipient: "+15557654321",
+        body: "second",
+        campaignId: campaign.campaignId,
+        reason: "second authorized send",
+        source: "agent",
+      },
+    );
+    await approveTextMailroomOutbound({ rootDir }, { itemId: first.id, approvedBy: "Chris" });
+    await approveTextMailroomOutbound({ rootDir }, { itemId: second.id, approvedBy: "Chris" });
+
+    vi.stubEnv(TEXT_MAILROOM_SEND_OPTIN_ENV, "1");
+    const firstSend = sendApprovedTextMailroomOutbound({ rootDir, sender }, { itemId: first.id });
+    await vi.waitFor(() => expect(sender).toHaveBeenCalledTimes(1));
+    await expect(
+      sendApprovedTextMailroomOutbound({ rootDir, sender }, { itemId: second.id }),
+    ).rejects.toThrow("campaign is already claimed");
+    releaseSender?.({ messageId: "msg-1" });
+    await expect(firstSend).resolves.toMatchObject({ status: "sent" });
+    expect(sender).toHaveBeenCalledTimes(1);
+  });
+
   it("fails_closed_when_body_changes_after_approval", async () => {
     const rootDir = await makeRoot();
     const sender = vi.fn(async () => ({ messageId: "msg-1" }));
