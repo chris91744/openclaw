@@ -13,8 +13,9 @@ import {
 import {
   approveTextMailroomOutbound,
   authorizeTextMailroomCampaign,
-  sendApprovedTextMailroomOutbound,
   proposeTextMailroomOutbound,
+  sendApprovedTextMailroomOutbound,
+  upsertTextMailroomContact,
 } from "./text-mailroom-outbound.js";
 import { TEXT_MAILROOM_SEND_OPTIN_ENV } from "./text-mailroom-types.js";
 
@@ -67,6 +68,45 @@ describe("Text Mailroom inbox, follow-ups, and integration signals", () => {
     expect(exported.count).toBe(1);
     expect(signal).toContain("prestigio");
     expect(signal).not.toContain("+15551234567");
+  });
+
+  it("links_inbound_threads_to_saved_contacts_for_reply_risk_context", async () => {
+    const rootDir = await makeRoot();
+    const contact = await upsertTextMailroomContact(
+      { rootDir },
+      {
+        phone: "+15551234567",
+        displayName: "Known Vendor",
+        labels: ["vendor"],
+        source: "manual",
+      },
+    );
+
+    const thread = await recordTextMailroomInbound(
+      { rootDir },
+      {
+        sender: "+1 (555) 123-4567",
+        body: "Can you come by tomorrow?",
+        threadId: "vendor-thread",
+        source: "bluebubbles",
+      },
+    );
+    const reply = await proposeTextMailroomOutbound(
+      { rootDir },
+      {
+        kind: "conversation_reply",
+        recipient: thread.sender,
+        body: "Thanks, what time works?",
+        contactId: thread.contactId,
+        threadId: thread.threadId,
+        reason: "known vendor reply",
+        source: "agent",
+      },
+    );
+
+    expect(thread.contactId).toBe(contact.contactId);
+    expect(reply.contactId).toBe(contact.contactId);
+    expect(reply.risk).toBe("low");
   });
 
   it("detects_and_dedupes_campaign_followups_when_no_reply_arrived", async () => {

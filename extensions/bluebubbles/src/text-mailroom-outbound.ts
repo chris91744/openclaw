@@ -422,6 +422,13 @@ export async function listTextMailroomContacts(
   ).toSorted((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
+export async function findTextMailroomContactByRecipient(
+  options: TextMailroomStoreOptions,
+  recipient: string,
+): Promise<TextMailroomContact | null> {
+  return findContactByPhoneHash(options, hashTextMailroomRecipient(recipient));
+}
+
 export async function listTextMailroomCampaigns(
   options: TextMailroomStoreOptions,
 ): Promise<TextMailroomCampaign[]> {

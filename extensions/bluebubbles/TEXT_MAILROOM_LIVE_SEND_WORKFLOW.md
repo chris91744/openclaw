@@ -17,6 +17,7 @@ This packet documents the branch that moves Text Mailroom from a safe queue foun
    - Direct messages are recorded by default when enabled.
    - Groups are skipped unless `includeGroups=true`.
    - Thread ids are hashed/stable and do not embed raw phone numbers.
+   - Inbound threads auto-link to saved contacts by sender hash, so replies inherit contact/risk context.
    - Ingestion runs before allowlist/pairing/agent-reply handling, so unknown senders can be captured for review without triggering replies.
    - Ingestion errors log only sender/body hashes and lengths.
 
@@ -67,6 +68,7 @@ This packet documents the branch that moves Text Mailroom from a safe queue foun
 - No environment send opt-ins are set by this branch.
 - No live config is edited unless an operator explicitly runs `enable-bluebubbles-ingest --apply --confirm-live-config-change`.
 - Inbound ingestion is opt-in via config and records local store files only.
+- Inbound contact linking uses stored contact hashes and does not expose raw phone numbers in safe summaries.
 - Text Mailroom send remains approval-bound and env-gated.
 - The BlueBubbles transport remains separately env-gated.
 - `request-send --contact-id` and `request-send --contact` resolve stored contacts internally and keep list/request summaries redacted.
@@ -92,7 +94,7 @@ Focused:
   extensions/bluebubbles/src/text-mailroom-outbound.test.ts
 ```
 
-Latest result: 4 files / 94 tests passed.
+Latest result: 4 files / 95 tests passed.
 
 Broader:
 
@@ -105,7 +107,7 @@ Broader:
   src/config/config.plugin-validation.test.ts
 ```
 
-Latest result: 17 files / 335 tests passed.
+Latest result: 17 files / 336 tests passed.
 
 Format:
 

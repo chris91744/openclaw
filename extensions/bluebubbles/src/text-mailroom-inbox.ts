@@ -1,5 +1,6 @@
 import path from "node:path";
 import {
+  findTextMailroomContactByRecipient,
   listTextMailroomOutboundItems,
   loadTextMailroomCampaign,
   proposeTextMailroomOutbound,
@@ -60,6 +61,9 @@ export async function recordTextMailroomInbound(
   const senderHash = hashTextMailroomRecipient(sender);
   const threadId = input.threadId?.trim() || `thread_${senderHash.slice(0, 24)}`;
   const existing = await loadTextMailroomThread(options, threadId);
+  const contact = input.contactId
+    ? null
+    : await findTextMailroomContactByRecipient(options, sender);
   const receivedAt = input.receivedAt ?? textMailroomNow(options.now);
   const message: TextMailroomInboundMessage = {
     id: textMailroomId("inbound"),
@@ -74,7 +78,7 @@ export async function recordTextMailroomInbound(
   const next: TextMailroomThread = {
     threadId,
     accountId: input.accountId ?? existing?.accountId,
-    contactId: input.contactId ?? existing?.contactId,
+    contactId: input.contactId ?? existing?.contactId ?? contact?.contactId,
     sender,
     senderHash,
     status: existing?.status ?? "open",
