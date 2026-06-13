@@ -1,6 +1,18 @@
 import type { Command } from "commander";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { resolveBlueBubblesAccount } from "../../extensions/bluebubbles/src/accounts.js";
+import {
+  probeBlueBubblesMessageHistory,
+  queryBlueBubblesMessageHistory,
+} from "../../extensions/bluebubbles/src/history-read.js";
+import {
+  buildTextMailroomHistoryScanPlan,
+  importTextMailroomHistoryScan,
+  summarizeTextMailroomHistoryScanPlan,
+  type TextMailroomHistoryImportSummary,
+  type TextMailroomHistoryScanSummary,
+} from "../../extensions/bluebubbles/src/text-mailroom-history-scan.js";
 import {
   buildTextMailroomDigest,
   classifyTextMailroomThread,
@@ -119,6 +131,17 @@ export type TextMailroomOperationalHealth = {
   };
 };
 
+type TextMailroomHistoryCliConnection = {
+  accountId: string;
+  baseUrl: string;
+  password: string;
+};
+
+type TextMailroomHistoryWindow = {
+  sinceMs: number;
+  untilMs: number;
+};
+
 function resolveRoot(command: Command): string {
   const opts = command.optsWithGlobals<TextMailroomCliOptions>();
   return path.resolve(
@@ -185,6 +208,58 @@ function readRequiredEnv(envName: string, env: NodeJS.ProcessEnv = process.env):
     throw new Error(`Missing required password env var: ${envName}`);
   }
   return value;
+}
+
+function resolveBlueBubblesHistoryConnection(params: {
+  config: OpenClawConfig;
+  accountId?: string;
+  serverUrl?: string;
+  passwordEnv?: string;
+}): TextMailroomHistoryCliConnection {
+  const account = resolveBlueBubblesAccount({
+    cfg: params.config as never,
+    accountId: params.accountId,
+  });
+  const baseUrl = params.serverUrl?.trim() || account.baseUrl;
+  const password = params.passwordEnv
+    ? readRequiredEnv(params.passwordEnv)
+    : account.config.password?.trim();
+  if (!baseUrl) {
+    throw new Error("BlueBubbles history scan requires a configured server URL");
+  }
+  if (!password) {
+    throw new Error("BlueBubbles history scan requires a configured password");
+  }
+  if (!account.enabled && !params.serverUrl) {
+    throw new Error("BlueBubbles history scan requires an enabled BlueBubbles account");
+  }
+  return { accountId: account.accountId, baseUrl, password };
+}
+
+function parseHistoryWindow(params: {
+  days?: string;
+  since?: string;
+  until?: string;
+  now?: () => Date;
+}): TextMailroomHistoryWindow {
+  const untilMs = params.until
+    ? parseTimestamp(params.until, "--until")
+    : (params.now?.() ?? new Date()).getTime();
+  const sinceMs = params.since
+    ? parseTimestamp(params.since, "--since")
+    : untilMs - parsePositiveInt(params.days, 14) * 24 * 60 * 60 * 1000;
+  if (sinceMs >= untilMs) {
+    throw new Error("scan-history requires --since before --until");
+  }
+  return { sinceMs, untilMs };
+}
+
+function parseTimestamp(value: string, name: string): number {
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`Invalid ${name} timestamp`);
+  }
+  return parsed;
 }
 
 export function buildBlueBubblesTextMailroomConfig(params: {
@@ -348,6 +423,35 @@ function formatTextMailroomOperationalHealth(health: TextMailroomOperationalHeal
     `Inbox: threads=${counts.inboxThreads} needsReply=${counts.inboxNeedsReply} high=${counts.inboxHighPriority}`,
     `Outbound: total=${counts.outboundTotal} queued=${status.queued} approved=${status.approved} sending=${status.sending} sent=${status.sent} failed=${status.failed} rejected=${status.rejected} claims=${counts.outboundClaims}`,
   ].join("\n");
+}
+
+function formatTextMailroomHistoryScanSummary(
+  summary: TextMailroomHistoryScanSummary | TextMailroomHistoryImportSummary,
+): string {
+  const importSummary = summary as Partial<TextMailroomHistoryImportSummary>;
+  const lines = [
+    `${summary.mode === "apply" ? "Applied" : "Dry run"} Text Mailroom history scan.`,
+    `Window: ${summary.since} to ${summary.until}`,
+    `Coverage: BlueBubbles-indexed direct messages only; groups excluded=${summary.dmOnly ? "yes" : "no"}; texts unavailable to BlueBubbles are not scanned`,
+    `Scanned: messages=${summary.scannedMessages} threads=${summary.scannedThreads} candidates=${summary.candidates.length}`,
+    `Skipped: groups=${summary.skipped.groups} lastOutbound=${summary.skipped.lastOutbound} tooRecent=${summary.skipped.tooRecent} noSignal=${summary.skipped.noSignal} doNotContact=${summary.skipped.doNotContact}`,
+  ];
+  if (typeof importSummary.imported === "number") {
+    lines.push(
+      `Import: imported=${importSummary.imported} alreadyImported=${importSummary.alreadyImported ?? 0} skippedClosed=${importSummary.skippedExistingClosed ?? 0} skippedDoNotContact=${importSummary.skippedDoNotContact ?? 0}`,
+    );
+  }
+  if (summary.candidates.length === 0) {
+    lines.push("No loose-thread candidates found.");
+    return lines.join("\n");
+  }
+  lines.push(
+    ...summary.candidates.map(
+      (candidate) =>
+        `${candidate.priority.padEnd(6)} ${candidate.threadId} receivedAt=${candidate.receivedAt} reasons=${candidate.reasons.join(",") || "none"} tags=${candidate.tags.join(",") || "none"}`,
+    ),
+  );
+  return lines.join("\n");
 }
 
 async function pathExists(filePath: string): Promise<boolean> {
@@ -542,6 +646,18 @@ function summarizeThread(thread: TextMailroomThread) {
   };
 }
 
+function summarizeDigestItem(item: Awaited<ReturnType<typeof buildTextMailroomDigest>>[number]) {
+  return {
+    threadId: item.threadId,
+    senderHash: item.senderHash,
+    status: item.status,
+    tags: item.tags,
+    priority: item.priority,
+    needsReply: item.needsReply,
+    lastInboundAt: item.lastInboundAt,
+  };
+}
+
 function summarizeCampaign(
   campaign: Awaited<ReturnType<typeof listTextMailroomCampaigns>>[number],
 ) {
@@ -676,6 +792,117 @@ export function registerTextMailroomCli(program: Command) {
       const health = await buildTextMailroomOperationalHealth({ rootDir: resolveRoot(root) });
       output(root, health, formatTextMailroomOperationalHealth(health));
     });
+
+  root
+    .command("probe-history")
+    .description(
+      "Safely probe BlueBubbles history-read capability without printing message contents",
+    )
+    .option("--account-id <id>", "BlueBubbles account id")
+    .option("--server-url <url>", "BlueBubbles server URL override")
+    .option("--password-env <name>", "Environment variable containing BlueBubbles password")
+    .option("--days <n>", "Lookback window in days", "14")
+    .option("--since <iso>", "Start timestamp")
+    .option("--until <iso>", "End timestamp")
+    .action(
+      async (opts: {
+        accountId?: string;
+        serverUrl?: string;
+        passwordEnv?: string;
+        days?: string;
+        since?: string;
+        until?: string;
+      }) => {
+        const connection = resolveBlueBubblesHistoryConnection({
+          config: loadConfig(),
+          accountId: opts.accountId,
+          serverUrl: opts.serverUrl,
+          passwordEnv: opts.passwordEnv,
+        });
+        const window = parseHistoryWindow(opts);
+        const probe = await probeBlueBubblesMessageHistory({
+          baseUrl: connection.baseUrl,
+          password: connection.password,
+          sinceMs: window.sinceMs,
+          untilMs: window.untilMs,
+        });
+        output(
+          root,
+          { accountId: connection.accountId, ...probe },
+          [
+            `BlueBubbles history probe: ${probe.ok ? "ok" : "failed"}`,
+            `Endpoint: ${probe.method} ${probe.endpoint}`,
+            `Window: ${new Date(window.sinceMs).toISOString()} to ${new Date(window.untilMs).toISOString()}`,
+            `Returned: rows=${probe.returnedCount} normalized=${probe.normalizedCount} shape=${probe.dataShape}`,
+            `Top-level keys: ${probe.topLevelKeys.join(",") || "none"}`,
+          ].join("\n"),
+        );
+      },
+    );
+
+  root
+    .command("scan-history")
+    .description(
+      "Dry-run or import loose-thread candidates from recent BlueBubbles message history",
+    )
+    .option("--account-id <id>", "BlueBubbles account id")
+    .option("--server-url <url>", "BlueBubbles server URL override")
+    .option("--password-env <name>", "Environment variable containing BlueBubbles password")
+    .option("--days <n>", "Lookback window in days", "14")
+    .option("--since <iso>", "Start timestamp")
+    .option("--until <iso>", "End timestamp")
+    .option("--max-messages <n>", "Maximum history messages to inspect", "1000")
+    .option("--max-candidates <n>", "Maximum loose-thread candidates to report", "50")
+    .option("--apply", "Import candidates into Text Mailroom; dry-run is the default", false)
+    .option("--confirm-import", "Required with --apply to acknowledge local inbox writes", false)
+    .action(
+      async (opts: {
+        accountId?: string;
+        serverUrl?: string;
+        passwordEnv?: string;
+        days?: string;
+        since?: string;
+        until?: string;
+        maxMessages?: string;
+        maxCandidates?: string;
+        apply?: boolean;
+        confirmImport?: boolean;
+      }) => {
+        if (opts.apply === true && opts.confirmImport !== true) {
+          throw new Error("Refusing to import history without --confirm-import");
+        }
+        const connection = resolveBlueBubblesHistoryConnection({
+          config: loadConfig(),
+          accountId: opts.accountId,
+          serverUrl: opts.serverUrl,
+          passwordEnv: opts.passwordEnv,
+        });
+        const window = parseHistoryWindow(opts);
+        const messages = await queryBlueBubblesMessageHistory({
+          baseUrl: connection.baseUrl,
+          password: connection.password,
+          sinceMs: window.sinceMs,
+          untilMs: window.untilMs,
+          maxMessages: parsePositiveInt(opts.maxMessages, 1000),
+          dmOnly: true,
+        });
+        const plan = buildTextMailroomHistoryScanPlan({
+          messages,
+          sinceMs: window.sinceMs,
+          untilMs: window.untilMs,
+          dmOnly: true,
+          maxCandidates: parsePositiveInt(opts.maxCandidates, 50),
+        });
+        const summary =
+          opts.apply === true
+            ? await importTextMailroomHistoryScan(
+                { rootDir: resolveRoot(root) },
+                { ...plan, mode: "apply" },
+              )
+            : summarizeTextMailroomHistoryScanPlan(plan);
+        output(root, summary, formatTextMailroomHistoryScanSummary(summary));
+      },
+    );
 
   root
     .command("list")
@@ -1213,7 +1440,7 @@ export function registerTextMailroomCli(program: Command) {
     const digest = await buildTextMailroomDigest({ rootDir: resolveRoot(root) });
     output(
       root,
-      digest,
+      digest.map(summarizeDigestItem),
       digest.length
         ? digest
             .map(

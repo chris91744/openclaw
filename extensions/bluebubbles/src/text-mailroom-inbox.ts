@@ -22,6 +22,7 @@ import {
   normalizeTextMailroomPhone,
   textMailroomId,
   textMailroomNow,
+  textMailroomSha256,
   type TextMailroomInboundMessage,
   type TextMailroomOutboundItem,
   type TextMailroomThread,
@@ -35,6 +36,7 @@ type InboundInput = {
   contactId?: string;
   receivedAt?: string;
   source?: string;
+  providerMessageId?: string;
 };
 
 export type TextMailroomDigestItem = {
@@ -61,17 +63,33 @@ export async function recordTextMailroomInbound(
   const senderHash = hashTextMailroomRecipient(sender);
   const threadId = input.threadId?.trim() || `thread_${senderHash.slice(0, 24)}`;
   const existing = await loadTextMailroomThread(options, threadId);
+  const providerMessageId = input.providerMessageId?.trim();
+  const bodyHash = hashTextMailroomBody(body);
+  const receivedAt = input.receivedAt ?? textMailroomNow(options.now);
+  if (providerMessageId && existing) {
+    const duplicate = existing.messages.find(
+      (message) => message.providerMessageId === providerMessageId,
+    );
+    if (duplicate) {
+      if (duplicate.bodyHash !== bodyHash || duplicate.receivedAt !== receivedAt) {
+        throw new Error("Text Mailroom provider message id collision");
+      }
+      return existing;
+    }
+  }
   const contact = input.contactId
     ? null
     : await findTextMailroomContactByRecipient(options, sender);
-  const receivedAt = input.receivedAt ?? textMailroomNow(options.now);
   const message: TextMailroomInboundMessage = {
-    id: textMailroomId("inbound"),
+    id: providerMessageId
+      ? `inbound_${textMailroomSha256(providerMessageId).slice(0, 24)}`
+      : textMailroomId("inbound"),
     direction: "inbound",
+    providerMessageId,
     sender,
     senderHash,
     body,
-    bodyHash: hashTextMailroomBody(body),
+    bodyHash,
     receivedAt,
     source: input.source,
   };

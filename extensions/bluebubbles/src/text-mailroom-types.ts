@@ -92,6 +92,8 @@ export type TextMailroomOutboundItem = {
 export type TextMailroomInboundMessage = {
   id: string;
   direction: "inbound" | "outbound";
+  /** Stable provider message id used for idempotent live ingest/backfill. */
+  providerMessageId?: string;
   sender: string;
   senderHash: string;
   body: string;
