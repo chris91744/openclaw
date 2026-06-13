@@ -848,6 +848,17 @@ const BlueBubblesActionSchema = z
   .strict()
   .optional();
 
+const BlueBubblesTextMailroomSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    rootDir: z.string().optional(),
+    includeGroups: z.boolean().optional(),
+    autoClassify: z.boolean().optional(),
+    exportPrestigio: z.boolean().optional(),
+  })
+  .strict()
+  .optional();
+
 const BlueBubblesGroupConfigSchema = z
   .object({
     requireMention: z.boolean().optional(),
@@ -866,6 +877,7 @@ export const BlueBubblesAccountSchemaBase = z
     serverUrl: z.string().optional(),
     password: z.string().optional().register(sensitive),
     webhookPath: z.string().optional(),
+    textMailroom: BlueBubblesTextMailroomSchema,
     dmPolicy: DmPolicySchema.optional().default("pairing"),
     allowFrom: z.array(BlueBubblesAllowFromEntry).optional(),
     groupAllowFrom: z.array(BlueBubblesAllowFromEntry).optional(),

@@ -78,4 +78,28 @@ describe("config schema regressions", () => {
 
     expect(res.ok).toBe(true);
   });
+
+  it("accepts inbound-only BlueBubbles Text Mailroom config", () => {
+    const res = validateConfigObject({
+      channels: {
+        bluebubbles: {
+          enabled: true,
+          serverUrl: "http://host.docker.internal:1234",
+          password: "test-password",
+          webhookPath: "/bluebubbles-webhook",
+          dmPolicy: "allowlist",
+          allowFrom: ["+15551230000"],
+          groupPolicy: "disabled",
+          textMailroom: {
+            enabled: true,
+            includeGroups: false,
+            autoClassify: true,
+            exportPrestigio: false,
+          },
+        },
+      },
+    });
+
+    expect(res.ok).toBe(true);
+  });
 });
