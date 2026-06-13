@@ -35,6 +35,34 @@ openclaw text-mailroom --json status
 
 The status output reports the store root, whether `channels.bluebubbles` is present/configured, whether `channels.bluebubbles.textMailroom.enabled` is on, allowlist counts, group policy, and the three outbound send gates.
 
+## Enable BlueBubbles Ingest
+
+Plan the live BlueBubbles -> Text Mailroom config change without writing it:
+
+```bash
+BLUEBUBBLES_PASSWORD="..." \
+openclaw text-mailroom enable-bluebubbles-ingest \
+  --server-url "http://host.docker.internal:1234" \
+  --password-env BLUEBUBBLES_PASSWORD \
+  --allow-from-file ~/.openclaw/credentials/bluebubbles-default-allowFrom.json
+```
+
+The command is dry-run by default and prints only a redacted summary. It does not print the server URL, password, or allowlisted recipients.
+
+Apply requires both `--apply` and `--confirm-live-config-change`:
+
+```bash
+BLUEBUBBLES_PASSWORD="..." \
+openclaw text-mailroom enable-bluebubbles-ingest \
+  --server-url "http://host.docker.internal:1234" \
+  --password-env BLUEBUBBLES_PASSWORD \
+  --allow-from-file ~/.openclaw/credentials/bluebubbles-default-allowFrom.json \
+  --apply \
+  --confirm-live-config-change
+```
+
+This writes `channels.bluebubbles` with `dmPolicy="allowlist"`, `groupPolicy="disabled"`, and `textMailroom.enabled=true`. It does not set `OPENCLAW_TEXT_MAILROOM_SEND_OPTIN` or `OPENCLAW_BLUEBUBBLES_OUTBOUND_ENABLED`.
+
 ## Queue And Approval
 
 Queue a proposed text without sending:

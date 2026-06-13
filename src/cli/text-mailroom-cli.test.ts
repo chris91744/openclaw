@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { defaultRuntime } from "../runtime.js";
 import {
+  buildBlueBubblesTextMailroomConfig,
   buildTextMailroomReadinessStatus,
   formatTextMailroomReadinessStatus,
   registerTextMailroomCli,
@@ -32,6 +33,69 @@ afterEach(async () => {
 });
 
 describe("text-mailroom cli", () => {
+  it("builds_a_redacted_bluebubbles_ingest_config_plan_without_send_gates", () => {
+    const plan = buildBlueBubblesTextMailroomConfig({
+      config: {
+        channels: {
+          telegram: { enabled: true },
+        },
+      } as never,
+      input: {
+        serverUrl: "http://secret-bluebubbles.local:1234",
+        password: "super-secret-password",
+        allowFrom: ["+15551234567", "+15551234567", "vendor@example.com"],
+        rootDir: "/private/text-mailroom",
+        includeGroups: false,
+        autoClassify: true,
+        exportPrestigio: false,
+      },
+    });
+
+    expect(plan.config.channels?.bluebubbles).toMatchObject({
+      enabled: true,
+      serverUrl: "http://secret-bluebubbles.local:1234",
+      password: "super-secret-password",
+      webhookPath: "/bluebubbles-webhook",
+      dmPolicy: "allowlist",
+      allowFrom: ["+15551234567", "vendor@example.com"],
+      groupPolicy: "disabled",
+      textMailroom: {
+        enabled: true,
+        rootDir: "/private/text-mailroom",
+        includeGroups: false,
+        autoClassify: true,
+        exportPrestigio: false,
+      },
+    });
+    expect(plan.config.channels?.telegram).toEqual({ enabled: true });
+    expect(plan.config).not.toHaveProperty("OPENCLAW_TEXT_MAILROOM_SEND_OPTIN");
+    expect(plan.config).not.toHaveProperty("OPENCLAW_BLUEBUBBLES_OUTBOUND_ENABLED");
+    expect(plan.config).not.toHaveProperty("OPENCLAW_IMESSAGE_SEND_OPTIN");
+
+    expect(plan.summary).toEqual({
+      channelWasPresent: false,
+      serverUrlConfigured: true,
+      passwordConfigured: true,
+      allowFromCount: 2,
+      dmPolicy: "allowlist",
+      groupPolicy: "disabled",
+      textMailroom: {
+        enabled: true,
+        includeGroups: false,
+        autoClassify: true,
+        exportPrestigio: false,
+        rootDirConfigured: true,
+      },
+      sendGatesChanged: false,
+    });
+
+    const summary = JSON.stringify(plan.summary);
+    expect(summary).not.toContain("secret-bluebubbles");
+    expect(summary).not.toContain("super-secret-password");
+    expect(summary).not.toContain("+15551234567");
+    expect(summary).not.toContain("vendor@example.com");
+  });
+
   it("builds_a_redacted_readiness_status_without_config_secrets_or_recipients", () => {
     const status = buildTextMailroomReadinessStatus({
       rootDir: "/tmp/text-mailroom",

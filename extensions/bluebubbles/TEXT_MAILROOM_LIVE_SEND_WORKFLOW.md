@@ -38,14 +38,23 @@ This packet documents the branch that moves Text Mailroom from a safe queue foun
    - `openclaw text-mailroom campaigns list` lists campaign ids, purposes, and send counts without raw recipients.
    - `request-send --campaign-id ... --kind campaign_outreach` reuses existing campaign recipient/cap/expiry checks.
 
+5. Dry-run-first BlueBubbles config helper
+   - New CLI: `openclaw text-mailroom enable-bluebubbles-ingest`.
+   - Dry-run is the default.
+   - Passwords are supplied through an environment variable name, not a direct CLI argument.
+   - `--apply` requires `--confirm-live-config-change`.
+   - The redacted summary omits server URLs, passwords, and allowlisted recipients.
+   - The helper writes `channels.bluebubbles` only; it does not set outbound send env gates.
+
 ## Safety Invariants
 
 - No environment send opt-ins are set by this branch.
-- No live config is edited by this branch.
+- No live config is edited unless an operator explicitly runs `enable-bluebubbles-ingest --apply --confirm-live-config-change`.
 - Inbound ingestion is opt-in via config and records local store files only.
 - Text Mailroom send remains approval-bound and env-gated.
 - The BlueBubbles transport remains separately env-gated.
 - `text-mailroom status` redacts BlueBubbles server URLs, passwords, raw phone numbers, and message bodies.
+- `enable-bluebubbles-ingest` dry-runs by default and its summary redacts BlueBubbles server URLs, passwords, and allowlisted recipients.
 - Campaign sends are still bounded by allowed recipient hashes, expiry, max sends, and campaign send locks.
 - List commands avoid raw phone numbers and message bodies.
 
@@ -61,7 +70,7 @@ Focused:
   extensions/bluebubbles/src/text-mailroom-outbound.test.ts
 ```
 
-Latest result: 4 files / 82 tests passed.
+Latest result: 4 files / 83 tests passed.
 
 Broader:
 
@@ -74,7 +83,7 @@ Broader:
   src/config/config.plugin-validation.test.ts
 ```
 
-Latest result: 17 files / 323 tests passed.
+Latest result: 17 files / 324 tests passed.
 
 Format:
 

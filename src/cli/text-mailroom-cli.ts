@@ -1,4 +1,5 @@
 import type { Command } from "commander";
+import fs from "node:fs/promises";
 import path from "node:path";
 import {
   buildTextMailroomDigest,
@@ -28,7 +29,12 @@ import {
   type TextMailroomRisk,
 } from "../../extensions/bluebubbles/src/text-mailroom-types.js";
 import { BLUEBUBBLES_OUTBOUND_ENABLED_ENV } from "../../extensions/bluebubbles/src/types.js";
-import { loadConfig, type OpenClawConfig } from "../config/config.js";
+import {
+  loadConfig,
+  readConfigFileSnapshot,
+  writeConfigFile,
+  type OpenClawConfig,
+} from "../config/config.js";
 import { resolveStateDir } from "../config/paths.js";
 import { defaultRuntime } from "../runtime.js";
 
@@ -37,6 +43,33 @@ const LEGACY_IMESSAGE_SEND_OPTIN_ENV = "OPENCLAW_IMESSAGE_SEND_OPTIN";
 type TextMailroomCliOptions = {
   root?: string;
   json?: boolean;
+};
+
+type BlueBubblesTextMailroomConfigInput = {
+  serverUrl: string;
+  password: string;
+  allowFrom: string[];
+  rootDir?: string;
+  includeGroups?: boolean;
+  autoClassify?: boolean;
+  exportPrestigio?: boolean;
+};
+
+type BlueBubblesTextMailroomConfigSummary = {
+  channelWasPresent: boolean;
+  serverUrlConfigured: boolean;
+  passwordConfigured: boolean;
+  allowFromCount: number;
+  dmPolicy: "allowlist";
+  groupPolicy: "disabled";
+  textMailroom: {
+    enabled: true;
+    includeGroups: boolean;
+    autoClassify: boolean;
+    exportPrestigio: boolean;
+    rootDirConfigured: boolean;
+  };
+  sendGatesChanged: false;
 };
 
 export type TextMailroomReadinessStatus = {
@@ -100,6 +133,105 @@ function booleanValue(value: unknown, fallback = false): boolean {
 
 function countArray(value: unknown): number {
   return Array.isArray(value) ? value.length : 0;
+}
+
+function collectOption(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
+function normalizeList(values: string[]): string[] {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
+async function readAllowFromFile(filePath: string): Promise<string[]> {
+  const raw = await fs.readFile(filePath, "utf8");
+  const parsed = JSON.parse(raw) as unknown;
+  if (Array.isArray(parsed)) {
+    return normalizeList(parsed.map((entry) => String(entry)));
+  }
+  const record = asRecord(parsed);
+  if (Array.isArray(record?.allowFrom)) {
+    return normalizeList(record.allowFrom.map((entry) => String(entry)));
+  }
+  throw new Error("Allow-from file must be a JSON array or an object with allowFrom array");
+}
+
+function readRequiredEnv(envName: string, env: NodeJS.ProcessEnv = process.env): string {
+  if (!/^[A-Z_][A-Z0-9_]*$/i.test(envName)) {
+    throw new Error("Password env var name is invalid");
+  }
+  const value = env[envName]?.trim();
+  if (!value) {
+    throw new Error(`Missing required password env var: ${envName}`);
+  }
+  return value;
+}
+
+export function buildBlueBubblesTextMailroomConfig(params: {
+  config: OpenClawConfig;
+  input: BlueBubblesTextMailroomConfigInput;
+}): { config: OpenClawConfig; summary: BlueBubblesTextMailroomConfigSummary } {
+  const serverUrl = params.input.serverUrl.trim();
+  const password = params.input.password.trim();
+  const allowFrom = normalizeList(params.input.allowFrom);
+  if (!serverUrl) {
+    throw new Error("BlueBubbles server URL is required");
+  }
+  if (!password) {
+    throw new Error("BlueBubbles password is required");
+  }
+  if (allowFrom.length === 0) {
+    throw new Error("At least one BlueBubbles allowlist entry is required");
+  }
+
+  const next = structuredClone(params.config) as OpenClawConfig;
+  const channels = asRecord(next.channels) ?? {};
+  next.channels = channels as OpenClawConfig["channels"];
+  const existingBlueBubbles = asRecord(channels.bluebubbles);
+  const existingTextMailroom = asRecord(existingBlueBubbles?.textMailroom);
+  const rootDir = params.input.rootDir?.trim();
+  const textMailroom = {
+    ...existingTextMailroom,
+    enabled: true,
+    includeGroups: params.input.includeGroups === true,
+    autoClassify: params.input.autoClassify !== false,
+    exportPrestigio: params.input.exportPrestigio === true,
+    ...(rootDir ? { rootDir } : {}),
+  };
+  channels.bluebubbles = {
+    ...existingBlueBubbles,
+    enabled: true,
+    serverUrl,
+    password,
+    webhookPath:
+      typeof existingBlueBubbles?.webhookPath === "string"
+        ? existingBlueBubbles.webhookPath
+        : "/bluebubbles-webhook",
+    dmPolicy: "allowlist",
+    allowFrom,
+    groupPolicy: "disabled",
+    textMailroom,
+  };
+
+  return {
+    config: next,
+    summary: {
+      channelWasPresent: Boolean(existingBlueBubbles),
+      serverUrlConfigured: true,
+      passwordConfigured: true,
+      allowFromCount: allowFrom.length,
+      dmPolicy: "allowlist",
+      groupPolicy: "disabled",
+      textMailroom: {
+        enabled: true,
+        includeGroups: textMailroom.includeGroups,
+        autoClassify: textMailroom.autoClassify,
+        exportPrestigio: textMailroom.exportPrestigio,
+        rootDirConfigured: stringConfigured(textMailroom.rootDir),
+      },
+      sendGatesChanged: false,
+    },
+  };
 }
 
 export function buildTextMailroomReadinessStatus(params: {
@@ -233,6 +365,83 @@ export function registerTextMailroomCli(program: Command) {
     .description("Supervised SMS/iMessage mailroom queue")
     .option("--root <dir>", "Text Mailroom store directory")
     .option("--json", "Print JSON output");
+
+  root
+    .command("enable-bluebubbles-ingest")
+    .description("Plan or apply BlueBubbles -> Text Mailroom ingestion config")
+    .requiredOption("--server-url <url>", "BlueBubbles server URL")
+    .requiredOption("--password-env <name>", "Environment variable containing BlueBubbles password")
+    .option(
+      "--allow-from <entry>",
+      "Allowed inbound sender; repeat for multiple entries",
+      collectOption,
+      [] as string[],
+    )
+    .option("--allow-from-file <file>", "JSON array or object with allowFrom array")
+    .option("--root-dir <dir>", "Text Mailroom store root override")
+    .option("--include-groups", "Also ingest group messages", false)
+    .option("--no-auto-classify", "Disable automatic Text Mailroom classification")
+    .option("--export-prestigio", "Write Prestigio text-signal exports after ingest", false)
+    .option("--apply", "Write the config change; dry-run is the default", false)
+    .option(
+      "--confirm-live-config-change",
+      "Required with --apply to acknowledge this writes live OpenClaw config",
+      false,
+    )
+    .action(
+      async (opts: {
+        serverUrl: string;
+        passwordEnv: string;
+        allowFrom: string[];
+        allowFromFile?: string;
+        rootDir?: string;
+        includeGroups?: boolean;
+        autoClassify?: boolean;
+        exportPrestigio?: boolean;
+        apply?: boolean;
+        confirmLiveConfigChange?: boolean;
+      }) => {
+        if (opts.apply === true && opts.confirmLiveConfigChange !== true) {
+          throw new Error("Refusing to write live config without --confirm-live-config-change");
+        }
+        const password = readRequiredEnv(opts.passwordEnv);
+        const fileAllowFrom = opts.allowFromFile
+          ? await readAllowFromFile(path.resolve(opts.allowFromFile))
+          : [];
+        const snapshot = await readConfigFileSnapshot();
+        if (!snapshot.valid) {
+          throw new Error(
+            "OpenClaw config is invalid; fix config before enabling BlueBubbles ingest",
+          );
+        }
+        const plan = buildBlueBubblesTextMailroomConfig({
+          config: structuredClone(snapshot.resolved) as OpenClawConfig,
+          input: {
+            serverUrl: opts.serverUrl,
+            password,
+            allowFrom: [...opts.allowFrom, ...fileAllowFrom],
+            rootDir: opts.rootDir,
+            includeGroups: opts.includeGroups === true,
+            autoClassify: opts.autoClassify !== false,
+            exportPrestigio: opts.exportPrestigio === true,
+          },
+        });
+        if (opts.apply === true) {
+          await writeConfigFile(plan.config);
+        }
+        output(
+          root,
+          { mode: opts.apply === true ? "applied" : "dry-run", ...plan.summary },
+          [
+            `${opts.apply === true ? "Applied" : "Dry run"} BlueBubbles Text Mailroom ingest config.`,
+            `BlueBubbles channel: ${plan.summary.channelWasPresent ? "updated" : "would be added"}`,
+            `Allowlist entries: ${plan.summary.allowFromCount}`,
+            `Text Mailroom ingest: enabled, includeGroups=${plan.summary.textMailroom.includeGroups ? "yes" : "no"}, autoClassify=${plan.summary.textMailroom.autoClassify ? "yes" : "no"}, exportPrestigio=${plan.summary.textMailroom.exportPrestigio ? "yes" : "no"}`,
+            "Send gates changed: no",
+          ].join("\n"),
+        );
+      },
+    );
 
   root
     .command("status")
