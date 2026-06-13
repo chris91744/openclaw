@@ -379,6 +379,22 @@ export async function listTextMailroomOutboundItems(
   );
 }
 
+export async function listTextMailroomContacts(
+  options: TextMailroomStoreOptions,
+): Promise<TextMailroomContact[]> {
+  return (
+    await listPrivateJson<TextMailroomContact>(textMailroomPaths(options.rootDir).contacts)
+  ).toSorted((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+export async function listTextMailroomCampaigns(
+  options: TextMailroomStoreOptions,
+): Promise<TextMailroomCampaign[]> {
+  return (
+    await listPrivateJson<TextMailroomCampaign>(textMailroomPaths(options.rootDir).campaigns)
+  ).toSorted((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
 export async function loadTextMailroomOutboundItem(
   options: TextMailroomStoreOptions,
   itemId: string,

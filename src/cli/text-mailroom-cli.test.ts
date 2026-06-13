@@ -78,6 +78,187 @@ describe("text-mailroom cli", () => {
     );
   });
 
+  it("request_send_queues_a_safe_summary_without_raw_body_or_phone", async () => {
+    const root = await makeRoot();
+    const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
+
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "--json",
+      "request-send",
+      "--to",
+      "+15551234567",
+      "--body",
+      "Secret request-send body",
+      "--reason",
+      "operator shortcut smoke",
+    ]);
+
+    const queued = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as {
+      id: string;
+      stage: string;
+      status: string;
+    };
+    expect(queued.id).toMatch(/^outbound_/);
+    expect(queued.stage).toBe("queued");
+    expect(queued.status).toBe("queued");
+    const output = log.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).not.toContain("+15551234567");
+    expect(output).not.toContain("Secret request-send body");
+  });
+
+  it("request_send_refuses_send_without_confirm_before_queueing", async () => {
+    const root = await makeRoot();
+    const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
+
+    await expect(
+      runCli([
+        "text-mailroom",
+        "--root",
+        root,
+        "request-send",
+        "--to",
+        "+15551234567",
+        "--body",
+        "hello",
+        "--reason",
+        "manual test",
+        "--approve-by",
+        "Chris",
+        "--send",
+      ]),
+    ).rejects.toThrow("Refusing to send without --confirm-send");
+
+    await runCli(["text-mailroom", "--root", root, "list"]);
+    expect(String(log.mock.calls.at(-1)?.[0])).toBe("No outbound queue items.");
+  });
+
+  it("request_send_confirmed_attempt_still_stops_at_send_opt_in_gate", async () => {
+    const root = await makeRoot();
+
+    await expect(
+      runCli([
+        "text-mailroom",
+        "--root",
+        root,
+        "request-send",
+        "--to",
+        "+15551234567",
+        "--body",
+        "hello",
+        "--reason",
+        "manual test",
+        "--approve-by",
+        "Chris",
+        "--send",
+        "--confirm-send",
+      ]),
+    ).rejects.toThrow("OPENCLAW_TEXT_MAILROOM_SEND_OPTIN");
+  });
+
+  it("lists_contacts_and_campaigns_without_raw_recipient_values", async () => {
+    const root = await makeRoot();
+    const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
+
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "contacts",
+      "upsert",
+      "--phone",
+      "+15551234567",
+      "--name",
+      "Handyman Lead",
+      "--labels",
+      "lead,vendor",
+    ]);
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "campaigns",
+      "authorize",
+      "--purpose",
+      "Handyman outreach",
+      "--by",
+      "Chris",
+      "--recipient",
+      "+15551234567",
+      "--max-sends",
+      "1",
+    ]);
+    await runCli(["text-mailroom", "--root", root, "contacts", "list"]);
+    await runCli(["text-mailroom", "--root", root, "campaigns", "list"]);
+
+    const output = log.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("Handyman Lead");
+    expect(output).toContain("lead,vendor");
+    expect(output).toContain("Handyman outreach");
+    expect(output).not.toContain("+15551234567");
+  });
+
+  it("request_send_respects_campaign_recipient_boundaries", async () => {
+    const root = await makeRoot();
+    const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
+
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "--json",
+      "campaigns",
+      "authorize",
+      "--purpose",
+      "Handyman outreach",
+      "--by",
+      "Chris",
+      "--recipient",
+      "+15551234567",
+      "--max-sends",
+      "1",
+    ]);
+    const campaign = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as { campaignId: string };
+
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "request-send",
+      "--kind",
+      "campaign_outreach",
+      "--campaign-id",
+      campaign.campaignId,
+      "--to",
+      "+15551234567",
+      "--body",
+      "Hi, are you available?",
+      "--reason",
+      "approved campaign smoke",
+    ]);
+
+    await expect(
+      runCli([
+        "text-mailroom",
+        "--root",
+        root,
+        "request-send",
+        "--kind",
+        "campaign_outreach",
+        "--campaign-id",
+        campaign.campaignId,
+        "--to",
+        "+15550000000",
+        "--body",
+        "Hi, are you available?",
+        "--reason",
+        "outside campaign smoke",
+      ]),
+    ).rejects.toThrow("does not allow this recipient");
+  });
+
   it("authorizes_campaigns_and_records_inbox_digests", async () => {
     const root = await makeRoot();
     const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});

@@ -15,7 +15,11 @@ import {
 import {
   approveTextMailroomOutbound,
   authorizeTextMailroomCampaign,
+  listTextMailroomCampaigns,
+  listTextMailroomContacts,
   listTextMailroomOutboundItems,
+  loadTextMailroomCampaign,
+  loadTextMailroomContact,
   loadTextMailroomOutboundItem,
   proposeTextMailroomOutbound,
   rejectTextMailroomOutbound,
@@ -88,6 +92,35 @@ function summarizeItem(item: Awaited<ReturnType<typeof listTextMailroomOutboundI
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
     reason: item.reason,
+  };
+}
+
+function summarizeContact(contact: Awaited<ReturnType<typeof listTextMailroomContacts>>[number]) {
+  return {
+    contactId: contact.contactId,
+    displayName: contact.displayName,
+    labels: contact.labels,
+    source: contact.source,
+    createdAt: contact.createdAt,
+    updatedAt: contact.updatedAt,
+  };
+}
+
+function summarizeCampaign(
+  campaign: Awaited<ReturnType<typeof listTextMailroomCampaigns>>[number],
+) {
+  return {
+    campaignId: campaign.campaignId,
+    purpose: campaign.purpose,
+    approved: campaign.approved,
+    approvedBy: campaign.approvedBy,
+    approvedAt: campaign.approvedAt,
+    maxSends: campaign.maxSends,
+    sendsUsed: campaign.sendsUsed,
+    followupsAllowed: campaign.followupsAllowed,
+    expiresAt: campaign.expiresAt,
+    createdAt: campaign.createdAt,
+    updatedAt: campaign.updatedAt,
   };
 }
 
@@ -173,6 +206,78 @@ export function registerTextMailroomCli(program: Command) {
     );
 
   root
+    .command("request-send")
+    .description("Queue a text request, optionally approve it, and optionally attempt send")
+    .requiredOption("--to <recipient>", "Recipient phone/handle")
+    .requiredOption("--body <text>", "Message body")
+    .requiredOption("--reason <reason>", "Why this text is proposed")
+    .option("--source <source>", "Source/provenance", "cli")
+    .option(
+      "--kind <kind>",
+      "manual, campaign_outreach, conversation_reply, or follow_up",
+      "manual",
+    )
+    .option("--risk <risk>", "low, medium, or high", "medium")
+    .option("--campaign-id <id>", "Campaign id")
+    .option("--contact-id <id>", "Contact id")
+    .option("--thread-id <id>", "Thread id")
+    .option("--approve-by <name>", "Approver name; approval still does not send")
+    .option("--send", "Attempt sending after approval")
+    .option("--confirm-send", "Confirm this command may call the sender")
+    .action(
+      async (opts: {
+        to: string;
+        body: string;
+        reason: string;
+        source?: string;
+        kind?: TextMailroomOutboundKind;
+        risk?: TextMailroomRisk;
+        campaignId?: string;
+        contactId?: string;
+        threadId?: string;
+        approveBy?: string;
+        send?: boolean;
+        confirmSend?: boolean;
+      }) => {
+        if (opts.send === true && !opts.approveBy?.trim()) {
+          throw new Error("request-send --send requires --approve-by <name>");
+        }
+        if (opts.send === true && opts.confirmSend !== true) {
+          throw new Error("Refusing to send without --confirm-send");
+        }
+
+        const rootDir = resolveRoot(root);
+        let item = await proposeTextMailroomOutbound(
+          { rootDir },
+          {
+            kind: opts.kind ?? "manual",
+            recipient: requireOption(opts.to, "--to"),
+            body: requireOption(opts.body, "--body"),
+            reason: requireOption(opts.reason, "--reason"),
+            source: opts.source ?? "cli",
+            risk: opts.risk ?? "medium",
+            campaignId: opts.campaignId,
+            contactId: opts.contactId,
+            threadId: opts.threadId,
+          },
+        );
+        let stage: "queued" | "approved" | "sent" = "queued";
+        if (opts.approveBy?.trim()) {
+          item = await approveTextMailroomOutbound(
+            { rootDir },
+            { itemId: item.id, approvedBy: opts.approveBy },
+          );
+          stage = "approved";
+        }
+        if (opts.send === true) {
+          item = await sendApprovedTextMailroomOutbound({ rootDir }, { itemId: item.id });
+          stage = "sent";
+        }
+        output(root, { stage, ...summarizeItem(item) }, `${stage} ${item.id}`);
+      },
+    );
+
+  root
     .command("approve")
     .argument("<itemId>")
     .description("Approve a queued text; does not send")
@@ -218,6 +323,37 @@ export function registerTextMailroomCli(program: Command) {
 
   const contacts = root.command("contacts").description("Contact identity helpers");
   contacts
+    .command("list")
+    .description("List contacts without raw phone numbers")
+    .action(async () => {
+      const contacts = await listTextMailroomContacts({ rootDir: resolveRoot(root) });
+      output(
+        root,
+        contacts.map(summarizeContact),
+        contacts.length
+          ? contacts
+              .map(
+                (contact) =>
+                  `${contact.contactId} ${(contact.displayName ?? "").padEnd(20)} ${contact.labels.join(",")}`,
+              )
+              .join("\n")
+          : "No Text Mailroom contacts.",
+      );
+    });
+
+  contacts
+    .command("show")
+    .argument("<contactId>")
+    .description("Show one contact for deliberate human review")
+    .action(async (contactId: string) => {
+      const contact = await loadTextMailroomContact({ rootDir: resolveRoot(root) }, contactId);
+      if (!contact) {
+        throw new Error("Text Mailroom contact not found");
+      }
+      output(root, contact);
+    });
+
+  contacts
     .command("upsert")
     .requiredOption("--phone <phone>", "Phone or handle")
     .option("--name <name>", "Display name")
@@ -237,6 +373,37 @@ export function registerTextMailroomCli(program: Command) {
     });
 
   const campaigns = root.command("campaigns").description("Campaign authorization helpers");
+  campaigns
+    .command("list")
+    .description("List authorized campaigns without raw recipients")
+    .action(async () => {
+      const campaigns = await listTextMailroomCampaigns({ rootDir: resolveRoot(root) });
+      output(
+        root,
+        campaigns.map(summarizeCampaign),
+        campaigns.length
+          ? campaigns
+              .map(
+                (campaign) =>
+                  `${campaign.campaignId} ${campaign.sendsUsed}/${campaign.maxSends} ${campaign.purpose}`,
+              )
+              .join("\n")
+          : "No Text Mailroom campaigns.",
+      );
+    });
+
+  campaigns
+    .command("show")
+    .argument("<campaignId>")
+    .description("Show one campaign authorization")
+    .action(async (campaignId: string) => {
+      const campaign = await loadTextMailroomCampaign({ rootDir: resolveRoot(root) }, campaignId);
+      if (!campaign) {
+        throw new Error("Text Mailroom campaign not found");
+      }
+      output(root, campaign);
+    });
+
   campaigns
     .command("authorize")
     .requiredOption("--purpose <purpose>", "Campaign purpose")

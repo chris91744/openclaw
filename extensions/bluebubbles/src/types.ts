@@ -18,6 +18,19 @@ export type BlueBubblesSupervisedRepliesConfig = {
   notifyTo?: string;
 };
 
+export type BlueBubblesTextMailroomConfig = {
+  /** If true, copy inbound BlueBubbles messages into the local Text Mailroom store. */
+  enabled?: boolean;
+  /** Optional Text Mailroom store root. Defaults to ~/.openclaw/workspace/text-mailroom. */
+  rootDir?: string;
+  /** If true, also record group messages. Direct messages are recorded by default. */
+  includeGroups?: boolean;
+  /** If false, skip deterministic classification after recording inbound messages. */
+  autoClassify?: boolean;
+  /** If true, export Prestigio text signals after classification. */
+  exportPrestigio?: boolean;
+};
+
 export type BlueBubblesAccountConfig = {
   /** Optional display name for this account (used in CLI/UI lists). */
   name?: string;
@@ -37,6 +50,8 @@ export type BlueBubblesAccountConfig = {
   dmPolicy?: DmPolicy;
   /** If enabled, direct replies are surfaced to Telegram for approval instead of auto-replied. */
   supervisedReplies?: BlueBubblesSupervisedRepliesConfig;
+  /** Optional local Text Mailroom ingestion for inbound SMS/iMessage events. */
+  textMailroom?: BlueBubblesTextMailroomConfig;
   allowFrom?: Array<string | number>;
   /** Optional allowlist for group senders. */
   groupAllowFrom?: Array<string | number>;

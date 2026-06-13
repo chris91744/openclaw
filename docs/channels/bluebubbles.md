@@ -280,6 +280,28 @@ Control whether responses are sent as a single message or streamed in blocks:
 - Media cap via `channels.bluebubbles.mediaMaxMb` (default: 8 MB).
 - Outbound text is chunked to `channels.bluebubbles.textChunkLimit` (default: 4000 chars).
 
+## Text Mailroom ingestion
+
+BlueBubbles can copy inbound direct messages into the local Text Mailroom store for supervised review:
+
+```json5
+{
+  channels: {
+    bluebubbles: {
+      textMailroom: {
+        enabled: true,
+        // rootDir: "/custom/text-mailroom",
+        // includeGroups: true,
+        // autoClassify: false,
+        // exportPrestigio: true,
+      },
+    },
+  },
+}
+```
+
+This records inbound messages only. It does not approve or send replies. Real Text Mailroom sends still require approved queue items plus `OPENCLAW_TEXT_MAILROOM_SEND_OPTIN=1`; the BlueBubbles transport also requires `OPENCLAW_BLUEBUBBLES_OUTBOUND_ENABLED=1`.
+
 ## Configuration reference
 
 Full configuration: [Configuration](/gateway/configuration)
@@ -295,6 +317,7 @@ Provider options:
 - `channels.bluebubbles.groupPolicy`: `open | allowlist | disabled` (default: `allowlist`).
 - `channels.bluebubbles.groupAllowFrom`: Group sender allowlist.
 - `channels.bluebubbles.groups`: Per-group config (`requireMention`, etc.).
+- `channels.bluebubbles.textMailroom`: Optional local Text Mailroom ingestion (`enabled`, `rootDir`, `includeGroups`, `autoClassify`, `exportPrestigio`).
 - `channels.bluebubbles.sendReadReceipts`: Send read receipts (default: `true`).
 - `channels.bluebubbles.blockStreaming`: Enable block streaming (default: `false`; required for streaming replies).
 - `channels.bluebubbles.textChunkLimit`: Outbound chunk size in chars (default: 4000).

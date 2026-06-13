@@ -30,6 +30,27 @@ openclaw text-mailroom propose \
   --reason "authorized handyman campaign"
 ```
 
+For the "text this person for me" operator path, use `request-send`. By default it only queues:
+
+```bash
+openclaw text-mailroom request-send \
+  --to "+15551234567" \
+  --body "Hi, are you available for a small job?" \
+  --reason "Chris requested handyman outreach"
+```
+
+It can also approve in the same command without sending:
+
+```bash
+openclaw text-mailroom request-send \
+  --to "+15551234567" \
+  --body "Hi, are you available for a small job?" \
+  --reason "Chris requested handyman outreach" \
+  --approve-by Chris
+```
+
+Adding `--send` is still blocked unless `--confirm-send` is present and both send opt-in environment variables are enabled.
+
 List queued items without raw recipient or body:
 
 ```bash
@@ -80,6 +101,12 @@ openclaw text-mailroom contacts upsert \
   --source "craigslist"
 ```
 
+List contacts without raw phone numbers:
+
+```bash
+openclaw text-mailroom contacts list
+```
+
 Authorize a bounded outreach campaign:
 
 ```bash
@@ -93,7 +120,24 @@ openclaw text-mailroom campaigns authorize \
   --followup-after-ms 172800000
 ```
 
+List campaigns without raw recipients:
+
+```bash
+openclaw text-mailroom campaigns list
+```
+
 Campaign sends require the recipient hash to be in the campaign allowlist, the campaign to be unexpired, and the send count to stay under `maxSends`.
+
+Queue a text inside an approved campaign:
+
+```bash
+openclaw text-mailroom request-send \
+  --kind campaign_outreach \
+  --campaign-id campaign_... \
+  --to "+15551234567" \
+  --body "Hi, are you available for a small job?" \
+  --reason "approved handyman campaign"
+```
 
 ## Inbox And Follow-Ups
 
