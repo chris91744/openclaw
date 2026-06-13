@@ -198,7 +198,16 @@ describe("text-mailroom cli", () => {
       "manual test",
     ]);
     const queued = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as { id: string };
-    await runCli(["text-mailroom", "--root", root, "approve", queued.id, "--by", "Chris"]);
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "approve",
+      queued.id,
+      "--by",
+      "Chris",
+      "--confirm-high-risk",
+    ]);
 
     await expect(runCli(["text-mailroom", "--root", root, "send", queued.id])).rejects.toThrow(
       "Refusing to send without --confirm-send",
@@ -457,6 +466,41 @@ describe("text-mailroom cli", () => {
     expect(String(log.mock.calls.at(-1)?.[0])).toBe("No outbound queue items.");
   });
 
+  it("approve_refuses_high_risk_items_without_explicit_high_risk_confirmation", async () => {
+    const root = await makeRoot();
+    const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
+
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "--json",
+      "request-send",
+      "--to",
+      "+15551234567",
+      "--body",
+      "High risk body",
+      "--reason",
+      "high risk approval smoke",
+    ]);
+    const queued = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as { id: string };
+
+    await expect(
+      runCli(["text-mailroom", "--root", root, "approve", queued.id, "--by", "Chris"]),
+    ).rejects.toThrow("high-risk approval requires confirmHighRisk");
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "approve",
+      queued.id,
+      "--by",
+      "Chris",
+      "--confirm-high-risk",
+    ]);
+    expect(String(log.mock.calls.at(-1)?.[0])).toContain(`Approved ${queued.id}`);
+  });
+
   it("request_reply_queues_from_an_inbox_thread_without_echoing_sender_or_body", async () => {
     const root = await makeRoot();
     const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
@@ -568,6 +612,7 @@ describe("text-mailroom cli", () => {
         "Chris",
         "--send",
         "--confirm-send",
+        "--confirm-high-risk",
       ]),
     ).rejects.toThrow("OPENCLAW_TEXT_MAILROOM_SEND_OPTIN");
   });

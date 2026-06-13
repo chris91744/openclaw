@@ -28,6 +28,7 @@ This packet documents the branch that moves Text Mailroom from a safe queue foun
    - `--to`, `--contact-id`, and `--contact` are mutually exclusive to avoid recipient/contact mismatch.
    - Ambiguous contact lookups fail closed and require `--contact-id`.
    - Risk is inferred when `--risk` is omitted: raw/unknown recipients are high risk, leads/personal contacts are medium risk, known/vendor/client contacts are low risk, and campaign/follow-up sends are high risk.
+   - High-risk drafts require `--confirm-high-risk` before approval.
    - `--approve-by Chris` approves without sending.
    - `--send` requires `--confirm-send` before any send attempt.
    - The underlying sender still requires `OPENCLAW_TEXT_MAILROOM_SEND_OPTIN=1`.
@@ -38,6 +39,7 @@ This packet documents the branch that moves Text Mailroom from a safe queue foun
    - Resolves the recipient from the inbox thread and queues a `conversation_reply`.
    - Default behavior queues only.
    - Safe summaries include the thread id and risk, but not the raw sender or body.
+   - High-risk replies require `--confirm-high-risk` before approval.
    - `--send` requires `--approve-by` and `--confirm-send`, then still hits the same env gates.
 
 4. Redacted readiness helper
@@ -69,6 +71,7 @@ This packet documents the branch that moves Text Mailroom from a safe queue foun
 - Ambiguous `request-send --contact` lookups refuse before queueing.
 - Omitted risk is inferred in the queue layer, not just the CLI, and explicit `--risk` still overrides inference.
 - `request-reply` resolves recipients from stored threads and refuses missing `--confirm-send` before queueing any send attempt.
+- High-risk approval is enforced in the shared approval layer, so CLI and future callers must explicitly confirm high-risk drafts before approval.
 - `text-mailroom status` redacts BlueBubbles server URLs, passwords, raw phone numbers, and message bodies.
 - `enable-bluebubbles-ingest` dry-runs by default and its summary redacts BlueBubbles server URLs, passwords, and allowlisted recipients.
 - Campaign sends are still bounded by allowed recipient hashes, expiry, max sends, and campaign send locks.
@@ -86,7 +89,7 @@ Focused:
   extensions/bluebubbles/src/text-mailroom-outbound.test.ts
 ```
 
-Latest result: 4 files / 90 tests passed.
+Latest result: 4 files / 92 tests passed.
 
 Broader:
 
@@ -99,7 +102,7 @@ Broader:
   src/config/config.plugin-validation.test.ts
 ```
 
-Latest result: 17 files / 331 tests passed.
+Latest result: 17 files / 333 tests passed.
 
 Format:
 

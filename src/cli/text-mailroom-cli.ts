@@ -613,6 +613,7 @@ export function registerTextMailroomCli(program: Command) {
     .option("--contact <query>", "Saved contact id, exact name, label, or unique name fragment")
     .option("--thread-id <id>", "Thread id")
     .option("--approve-by <name>", "Approver name; approval still does not send")
+    .option("--confirm-high-risk", "Required to approve high-risk drafts", false)
     .option("--send", "Attempt sending after approval")
     .option("--confirm-send", "Confirm this command may call the sender")
     .action(
@@ -628,6 +629,7 @@ export function registerTextMailroomCli(program: Command) {
         contact?: string;
         threadId?: string;
         approveBy?: string;
+        confirmHighRisk?: boolean;
         send?: boolean;
         confirmSend?: boolean;
       }) => {
@@ -663,7 +665,11 @@ export function registerTextMailroomCli(program: Command) {
         if (opts.approveBy?.trim()) {
           item = await approveTextMailroomOutbound(
             { rootDir },
-            { itemId: item.id, approvedBy: opts.approveBy },
+            {
+              itemId: item.id,
+              approvedBy: opts.approveBy,
+              confirmHighRisk: opts.confirmHighRisk,
+            },
           );
           stage = "approved";
         }
@@ -684,6 +690,7 @@ export function registerTextMailroomCli(program: Command) {
     .option("--source <source>", "Source/provenance", "cli")
     .option("--risk <risk>", "low, medium, or high; inferred when omitted")
     .option("--approve-by <name>", "Approver name; approval still does not send")
+    .option("--confirm-high-risk", "Required to approve high-risk drafts", false)
     .option("--send", "Attempt sending after approval")
     .option("--confirm-send", "Confirm this command may call the sender")
     .action(
@@ -695,6 +702,7 @@ export function registerTextMailroomCli(program: Command) {
           source?: string;
           risk?: TextMailroomRisk;
           approveBy?: string;
+          confirmHighRisk?: boolean;
           send?: boolean;
           confirmSend?: boolean;
         },
@@ -728,7 +736,11 @@ export function registerTextMailroomCli(program: Command) {
         if (opts.approveBy?.trim()) {
           item = await approveTextMailroomOutbound(
             { rootDir },
-            { itemId: item.id, approvedBy: opts.approveBy },
+            {
+              itemId: item.id,
+              approvedBy: opts.approveBy,
+              confirmHighRisk: opts.confirmHighRisk,
+            },
           );
           stage = "approved";
         }
@@ -746,13 +758,21 @@ export function registerTextMailroomCli(program: Command) {
     .description("Approve a queued text; does not send")
     .requiredOption("--by <name>", "Approver")
     .option("--body <text>", "Edited body to approve")
-    .action(async (itemId: string, opts: { by: string; body?: string }) => {
-      const item = await approveTextMailroomOutbound(
-        { rootDir: resolveRoot(root) },
-        { itemId, approvedBy: opts.by, editedBody: opts.body },
-      );
-      output(root, summarizeItem(item), `Approved ${item.id}`);
-    });
+    .option("--confirm-high-risk", "Required to approve high-risk drafts", false)
+    .action(
+      async (itemId: string, opts: { by: string; body?: string; confirmHighRisk?: boolean }) => {
+        const item = await approveTextMailroomOutbound(
+          { rootDir: resolveRoot(root) },
+          {
+            itemId,
+            approvedBy: opts.by,
+            editedBody: opts.body,
+            confirmHighRisk: opts.confirmHighRisk,
+          },
+        );
+        output(root, summarizeItem(item), `Approved ${item.id}`);
+      },
+    );
 
   root
     .command("reject")

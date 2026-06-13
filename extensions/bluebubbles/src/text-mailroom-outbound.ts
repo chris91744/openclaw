@@ -212,7 +212,12 @@ export async function proposeTextMailroomOutbound(
 
 export async function approveTextMailroomOutbound(
   options: TextMailroomStoreOptions,
-  params: { itemId: string; approvedBy: string; editedBody?: string },
+  params: {
+    itemId: string;
+    approvedBy: string;
+    editedBody?: string;
+    confirmHighRisk?: boolean;
+  },
 ): Promise<TextMailroomOutboundItem> {
   const item = await loadRequiredOutbound(options, params.itemId);
   if (item.status !== "queued") {
@@ -222,6 +227,9 @@ export async function approveTextMailroomOutbound(
   }
   if (!params.approvedBy.trim()) {
     throw new Error("Text Mailroom approval requires approvedBy");
+  }
+  if (item.risk === "high" && params.confirmHighRisk !== true) {
+    throw new Error("Text Mailroom high-risk approval requires confirmHighRisk");
   }
   const body = params.editedBody?.trim() || item.body;
   if (!body.trim()) {
@@ -246,6 +254,7 @@ export async function approveTextMailroomOutbound(
       recipientHash: item.recipientHash,
       bodyHash: hashTextMailroomBody(body),
       campaignId: item.campaignId,
+      ...(item.risk === "high" ? { highRiskConfirmed: true } : {}),
     },
     updatedAt: now,
   };

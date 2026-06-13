@@ -94,7 +94,10 @@ describe("Text Mailroom inbox, follow-ups, and integration signals", () => {
         source: "craigslist",
       },
     );
-    await approveTextMailroomOutbound({ rootDir }, { itemId: item.id, approvedBy: "Chris" });
+    await approveTextMailroomOutbound(
+      { rootDir },
+      { itemId: item.id, approvedBy: "Chris", confirmHighRisk: true },
+    );
     vi.stubEnv(TEXT_MAILROOM_SEND_OPTIN_ENV, "1");
     await sendApprovedTextMailroomOutbound({ rootDir, sender }, { itemId: item.id });
 
@@ -128,7 +131,10 @@ describe("Text Mailroom inbox, follow-ups, and integration signals", () => {
         source: "craigslist",
       },
     );
-    await approveTextMailroomOutbound({ rootDir }, { itemId: item.id, approvedBy: "Chris" });
+    await approveTextMailroomOutbound(
+      { rootDir },
+      { itemId: item.id, approvedBy: "Chris", confirmHighRisk: true },
+    );
     vi.stubEnv(TEXT_MAILROOM_SEND_OPTIN_ENV, "1");
     await sendApprovedTextMailroomOutbound(
       { rootDir, sender: async () => ({ messageId: "msg-1" }) },
