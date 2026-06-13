@@ -100,6 +100,18 @@ openclaw text-mailroom request-send \
   --reason "Chris requested handyman outreach"
 ```
 
+You can also search first and then queue by a unique saved name fragment:
+
+```bash
+openclaw text-mailroom contacts search "marina handyman"
+openclaw text-mailroom request-send \
+  --contact "marina handyman" \
+  --body "Hi, are you available for a small job?" \
+  --reason "Chris requested handyman outreach"
+```
+
+Ambiguous saved-contact matches fail closed and require `--contact-id`.
+
 It can also approve in the same command without sending:
 
 ```bash
@@ -107,7 +119,8 @@ openclaw text-mailroom request-send \
   --to "+15551234567" \
   --body "Hi, are you available for a small job?" \
   --reason "Chris requested handyman outreach" \
-  --approve-by Chris
+  --approve-by Chris \
+  --confirm-approval
 ```
 
 Adding `--send` is still blocked unless `--confirm-send` is present and both send opt-in environment variables are enabled.
@@ -127,7 +140,7 @@ openclaw text-mailroom show outbound_...
 Approve without sending:
 
 ```bash
-openclaw text-mailroom approve outbound_... --by Chris
+openclaw text-mailroom approve outbound_... --by Chris --confirm-approval
 ```
 
 Reject:
@@ -186,7 +199,8 @@ openclaw text-mailroom campaigns authorize \
   --recipient "+15557654321" \
   --max-sends 4 \
   --followups \
-  --followup-after-ms 172800000
+  --followup-after-ms 172800000 \
+  --confirm-authorization
 ```
 
 List campaigns without raw recipients:
@@ -208,6 +222,8 @@ openclaw text-mailroom request-send \
   --reason "approved handyman campaign"
 ```
 
+Approval and campaign authorization are deliberately separate from queueing. `--approve-by` requires `--confirm-approval`, high-risk drafts still also require `--confirm-high-risk`, and campaign creation requires `--confirm-authorization`.
+
 ## Inbox And Follow-Ups
 
 Record an inbound message:
@@ -225,6 +241,16 @@ Classify and digest:
 openclaw text-mailroom inbox classify client-thread
 openclaw text-mailroom inbox digest
 ```
+
+Hold, close, or reopen a thread:
+
+```bash
+openclaw text-mailroom inbox hold client-thread --by Chris --reason "waiting"
+openclaw text-mailroom inbox close client-thread --by Chris --reason "done"
+openclaw text-mailroom inbox reopen client-thread --by Chris
+```
+
+Held and closed threads refuse `request-reply` before queueing a draft.
 
 Queue due follow-ups for campaigns that explicitly allow follow-ups:
 

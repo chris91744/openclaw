@@ -28,11 +28,12 @@ This packet documents the branch that moves Text Mailroom from a safe queue foun
    - Supports `--contact <query>` for a saved contact id, exact name, exact label, or unique name fragment.
    - `--to`, `--contact-id`, and `--contact` are mutually exclusive to avoid recipient/contact mismatch.
    - Ambiguous contact lookups fail closed and require `--contact-id`.
+   - `contacts search <query>` gives a redacted way to disambiguate saved people before queueing by name.
    - Supports `--request-id <id>` so agent retries return the existing draft instead of queueing duplicates.
    - Risk is inferred when `--risk` is omitted: raw/unknown recipients are high risk, leads/personal contacts are medium risk, known/vendor/client contacts are low risk, and campaign/follow-up sends are high risk.
    - Explicit `--risk` can upgrade risk, but it cannot downgrade the inferred risk.
    - High-risk drafts require `--confirm-high-risk` before approval.
-   - `--approve-by Chris` approves without sending.
+   - `--approve-by Chris --confirm-approval` approves without sending.
    - `--send` requires `--confirm-send` before any send attempt.
    - The underlying sender still requires `OPENCLAW_TEXT_MAILROOM_SEND_OPTIN=1`.
    - The BlueBubbles transport still separately requires `OPENCLAW_BLUEBUBBLES_OUTBOUND_ENABLED=1`.
@@ -44,6 +45,8 @@ This packet documents the branch that moves Text Mailroom from a safe queue foun
    - Safe summaries include the thread id and risk, but not the raw sender or body.
    - Supports `--request-id <id>` for retry-safe reply drafting.
    - Refuses held, closed, or do-not-contact threads before queueing.
+   - `inbox hold`, `inbox close`, and `inbox reopen` are first-class local status changes with redacted summaries and audit events.
+   - `--approve-by` requires `--confirm-approval`.
    - High-risk replies require `--confirm-high-risk` before approval.
    - `--send` requires `--approve-by` and `--confirm-send`, then still hits the same env gates.
 
@@ -78,9 +81,14 @@ This packet documents the branch that moves Text Mailroom from a safe queue foun
 - The BlueBubbles transport remains separately env-gated.
 - `request-send --contact-id` and `request-send --contact` resolve stored contacts internally and keep list/request summaries redacted.
 - Ambiguous `request-send --contact` lookups refuse before queueing.
+- Non-show JSON outputs for contacts and inbox threads return redacted summaries rather than raw phone numbers or message bodies.
 - Omitted risk is inferred in the queue layer, not just the CLI, and explicit `--risk` can only make the stored risk stricter.
 - `request-reply` resolves recipients from stored threads, refuses held/closed/do-not-contact threads, and refuses missing `--confirm-send` before queueing any send attempt.
+- `inbox hold` and `inbox close` set non-open thread status through the CLI and `request-reply` honors that status.
+- Approval requires an explicit `confirmApproval` in the shared approval layer, so callers cannot approve by merely passing `approvedBy`.
 - High-risk approval is enforced in the shared approval layer, so CLI and future callers must explicitly confirm high-risk drafts before approval.
+- Campaign authorization requires an explicit `confirmAuthorization` in the shared campaign layer, so bounded outreach setup cannot be created by a bare `approvedBy` string.
+- Rejection requires a non-empty reviewer and writes actor metadata without raw phone numbers or message bodies.
 - Idempotency is enforced in the shared proposal layer: same `requestId` plus same payload returns the existing item, while same `requestId` plus different recipient/body/kind fails closed.
 - `text-mailroom status` redacts BlueBubbles server URLs, passwords, raw phone numbers, and message bodies.
 - `text-mailroom health` reports counts only and avoids raw phone numbers and message bodies.
@@ -101,7 +109,7 @@ Focused:
   extensions/bluebubbles/src/text-mailroom-outbound.test.ts
 ```
 
-Latest result: 4 files / 103 tests passed.
+Latest result: 3 files / 47 tests passed.
 
 Broader:
 
@@ -114,7 +122,7 @@ Broader:
   src/config/config.plugin-validation.test.ts
 ```
 
-Latest result: 17 files / 344 tests passed.
+Latest result: 17 files / 349 tests passed.
 
 Format:
 

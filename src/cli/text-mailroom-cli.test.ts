@@ -3,10 +3,6 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  safeFileStem,
-  textMailroomPaths,
-} from "../../extensions/bluebubbles/src/text-mailroom-store.js";
 import { defaultRuntime } from "../runtime.js";
 import {
   buildBlueBubblesTextMailroomConfig,
@@ -226,6 +222,72 @@ describe("text-mailroom cli", () => {
     expect(output).not.toContain("Secret health smoke body");
   });
 
+  it("redacts_non_show_json_outputs_for_contacts_and_inbox_threads", async () => {
+    const root = await makeRoot();
+    const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
+
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "--json",
+      "contacts",
+      "upsert",
+      "--phone",
+      "+15551234567",
+      "--name",
+      "Redacted Contact",
+      "--labels",
+      "vendor",
+    ]);
+    const contactSummary = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as {
+      contactId: string;
+      displayName?: string;
+      phone?: string;
+    };
+    expect(contactSummary.contactId).toMatch(/^contact_/);
+    expect(contactSummary.displayName).toBe("Redacted Contact");
+    expect(contactSummary).not.toHaveProperty("phone");
+
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "--json",
+      "inbox",
+      "record",
+      "--from",
+      "+15551234567",
+      "--body",
+      "Secret inbound JSON body",
+      "--thread-id",
+      "redacted-thread",
+    ]);
+    const recorded = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as {
+      threadId: string;
+      sender?: string;
+      messages?: unknown[];
+      messageCount: number;
+    };
+    expect(recorded.threadId).toBe("redacted-thread");
+    expect(recorded.messageCount).toBe(1);
+    expect(recorded).not.toHaveProperty("sender");
+    expect(recorded).not.toHaveProperty("messages");
+
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "--json",
+      "inbox",
+      "classify",
+      "redacted-thread",
+    ]);
+    const classifiedOutput = String(log.mock.calls.at(-1)?.[0]);
+    expect(classifiedOutput).not.toContain("+15551234567");
+    expect(classifiedOutput).not.toContain("Secret inbound JSON body");
+  });
+
   it("queues_and_lists_outbound_items_without_body_or_phone_in_list_output", async () => {
     const root = await makeRoot();
     const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
@@ -277,6 +339,7 @@ describe("text-mailroom cli", () => {
       queued.id,
       "--by",
       "Chris",
+      "--confirm-approval",
       "--confirm-high-risk",
     ]);
 
@@ -676,7 +739,32 @@ describe("text-mailroom cli", () => {
     expect(String(log.mock.calls.at(-1)?.[0])).toBe("No outbound queue items.");
   });
 
-  it("approve_refuses_high_risk_items_without_explicit_high_risk_confirmation", async () => {
+  it("request_send_refuses_inline_approval_without_confirmation_before_queueing", async () => {
+    const root = await makeRoot();
+    const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
+
+    await expect(
+      runCli([
+        "text-mailroom",
+        "--root",
+        root,
+        "request-send",
+        "--to",
+        "+15551234567",
+        "--body",
+        "hello",
+        "--reason",
+        "manual approval smoke",
+        "--approve-by",
+        "Chris",
+      ]),
+    ).rejects.toThrow("Refusing to approve without --confirm-approval");
+
+    await runCli(["text-mailroom", "--root", root, "list"]);
+    expect(String(log.mock.calls.at(-1)?.[0])).toBe("No outbound queue items.");
+  });
+
+  it("approve_requires_approval_confirmation_and_high_risk_confirmation", async () => {
     const root = await makeRoot();
     const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
 
@@ -697,6 +785,18 @@ describe("text-mailroom cli", () => {
 
     await expect(
       runCli(["text-mailroom", "--root", root, "approve", queued.id, "--by", "Chris"]),
+    ).rejects.toThrow("approval requires confirmApproval");
+    await expect(
+      runCli([
+        "text-mailroom",
+        "--root",
+        root,
+        "approve",
+        queued.id,
+        "--by",
+        "Chris",
+        "--confirm-approval",
+      ]),
     ).rejects.toThrow("high-risk approval requires confirmHighRisk");
     await runCli([
       "text-mailroom",
@@ -706,6 +806,7 @@ describe("text-mailroom cli", () => {
       queued.id,
       "--by",
       "Chris",
+      "--confirm-approval",
       "--confirm-high-risk",
     ]);
     expect(String(log.mock.calls.at(-1)?.[0])).toContain(`Approved ${queued.id}`);
@@ -840,12 +941,18 @@ describe("text-mailroom cli", () => {
       "--thread-id",
       threadId,
     ]);
-    const threadPath = path.join(
-      textMailroomPaths(root).inboxThreads,
-      `${safeFileStem(threadId)}.json`,
-    );
-    const thread = JSON.parse(await fs.readFile(threadPath, "utf8")) as { status: string };
-    await fs.writeFile(threadPath, JSON.stringify({ ...thread, status: "closed" }, null, 2));
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "inbox",
+      "close",
+      threadId,
+      "--by",
+      "Chris",
+      "--reason",
+      "done",
+    ]);
 
     await expect(
       runCli([
@@ -863,6 +970,72 @@ describe("text-mailroom cli", () => {
 
     await runCli(["text-mailroom", "--root", root, "list"]);
     expect(String(log.mock.calls.at(-1)?.[0])).toBe("No outbound queue items.");
+  });
+
+  it("inbox_hold_and_reopen_control_reply_queueing", async () => {
+    const root = await makeRoot();
+    const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
+    const threadId = "held-thread";
+
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "inbox",
+      "record",
+      "--from",
+      "+15551234567",
+      "--body",
+      "Can you come tomorrow?",
+      "--thread-id",
+      threadId,
+    ]);
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "inbox",
+      "hold",
+      threadId,
+      "--by",
+      "Chris",
+      "--reason",
+      "waiting",
+    ]);
+
+    await expect(
+      runCli([
+        "text-mailroom",
+        "--root",
+        root,
+        "request-reply",
+        threadId,
+        "--body",
+        "hello back",
+        "--reason",
+        "held reply smoke",
+      ]),
+    ).rejects.toThrow("held threads");
+
+    await runCli(["text-mailroom", "--root", root, "inbox", "reopen", threadId, "--by", "Chris"]);
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "--json",
+      "request-reply",
+      threadId,
+      "--body",
+      "hello back",
+      "--reason",
+      "reopened reply smoke",
+    ]);
+    const queued = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as {
+      threadId?: string;
+      status: string;
+    };
+    expect(queued.threadId).toBe(threadId);
+    expect(queued.status).toBe("queued");
   });
 
   it("request_reply_refuses_send_without_confirm_before_queueing", async () => {
@@ -923,6 +1096,7 @@ describe("text-mailroom cli", () => {
         "Chris",
         "--send",
         "--confirm-send",
+        "--confirm-approval",
         "--confirm-high-risk",
       ]),
     ).rejects.toThrow("OPENCLAW_TEXT_MAILROOM_SEND_OPTIN");
@@ -959,6 +1133,7 @@ describe("text-mailroom cli", () => {
       "+15551234567",
       "--max-sends",
       "1",
+      "--confirm-authorization",
     ]);
     await runCli(["text-mailroom", "--root", root, "contacts", "list"]);
     await runCli(["text-mailroom", "--root", root, "campaigns", "list"]);
@@ -968,6 +1143,32 @@ describe("text-mailroom cli", () => {
     expect(output).toContain("lead,vendor");
     expect(output).toContain("Handyman outreach");
     expect(output).not.toContain("+15551234567");
+  });
+
+  it("campaign_authorize_requires_confirmation_before_saving", async () => {
+    const root = await makeRoot();
+    const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
+
+    await expect(
+      runCli([
+        "text-mailroom",
+        "--root",
+        root,
+        "campaigns",
+        "authorize",
+        "--purpose",
+        "Handyman outreach",
+        "--by",
+        "Chris",
+        "--recipient",
+        "+15551234567",
+        "--max-sends",
+        "1",
+      ]),
+    ).rejects.toThrow("campaign authorization requires confirmAuthorization");
+
+    await runCli(["text-mailroom", "--root", root, "campaigns", "list"]);
+    expect(String(log.mock.calls.at(-1)?.[0])).toBe("No Text Mailroom campaigns.");
   });
 
   it("request_send_respects_campaign_recipient_boundaries", async () => {
@@ -989,6 +1190,7 @@ describe("text-mailroom cli", () => {
       "+15551234567",
       "--max-sends",
       "1",
+      "--confirm-authorization",
     ]);
     const campaign = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as { campaignId: string };
 
@@ -1047,6 +1249,7 @@ describe("text-mailroom cli", () => {
       "+15551234567",
       "--max-sends",
       "2",
+      "--confirm-authorization",
     ]);
     await runCli([
       "text-mailroom",

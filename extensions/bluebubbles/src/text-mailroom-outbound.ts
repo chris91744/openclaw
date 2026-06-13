@@ -52,6 +52,7 @@ type ContactInput = {
 type CampaignInput = {
   purpose: string;
   approvedBy: string;
+  confirmAuthorization?: boolean;
   allowedRecipients: string[];
   maxSends: number;
   followupsAllowed?: boolean;
@@ -118,7 +119,9 @@ export async function authorizeTextMailroomCampaign(
   options: TextMailroomStoreOptions,
   input: CampaignInput,
 ): Promise<TextMailroomCampaign> {
-  await ensureTextMailroomStore(options.rootDir);
+  if (input.confirmAuthorization !== true) {
+    throw new Error("Text Mailroom campaign authorization requires confirmAuthorization");
+  }
   if (!input.approvedBy.trim()) {
     throw new Error("Text Mailroom campaign approval requires approvedBy");
   }
@@ -134,6 +137,7 @@ export async function authorizeTextMailroomCampaign(
   if (allowedRecipientHashes.length === 0) {
     throw new Error("Text Mailroom campaign requires at least one allowed recipient");
   }
+  await ensureTextMailroomStore(options.rootDir);
   const now = textMailroomNow(options.now);
   const campaign: TextMailroomCampaign = {
     campaignId: textMailroomId("campaign"),
@@ -154,6 +158,7 @@ export async function authorizeTextMailroomCampaign(
   await appendTextMailroomAudit(options, {
     type: "text_mailroom.campaign.authorized",
     campaignId: campaign.campaignId,
+    actor: campaign.approvedBy,
   });
   return campaign;
 }
@@ -251,9 +256,13 @@ export async function approveTextMailroomOutbound(
     itemId: string;
     approvedBy: string;
     editedBody?: string;
+    confirmApproval?: boolean;
     confirmHighRisk?: boolean;
   },
 ): Promise<TextMailroomOutboundItem> {
+  if (params.confirmApproval !== true) {
+    throw new Error("Text Mailroom approval requires confirmApproval");
+  }
   const item = await loadRequiredOutbound(options, params.itemId);
   if (item.status !== "queued") {
     throw new Error(
@@ -300,6 +309,7 @@ export async function approveTextMailroomOutbound(
     campaignId: next.campaignId,
     recipientHash: next.recipientHash,
     bodyHash: next.bodyHash,
+    actor: next.approval.approvedBy,
   });
   return next;
 }
@@ -308,6 +318,10 @@ export async function rejectTextMailroomOutbound(
   options: TextMailroomStoreOptions,
   params: { itemId: string; rejectedBy: string; reason?: string },
 ): Promise<TextMailroomOutboundItem> {
+  const rejectedBy = params.rejectedBy.trim();
+  if (!rejectedBy) {
+    throw new Error("Text Mailroom rejection requires rejectedBy");
+  }
   const item = await loadRequiredOutbound(options, params.itemId);
   if (item.status === "sent" || item.status === "sending") {
     throw new Error(`Text Mailroom cannot reject item with status ${item.status}`);
@@ -316,7 +330,7 @@ export async function rejectTextMailroomOutbound(
   const next: TextMailroomOutboundItem = {
     ...item,
     status: "rejected",
-    rejection: { rejectedBy: params.rejectedBy.trim(), rejectedAt: now, reason: params.reason },
+    rejection: { rejectedBy, rejectedAt: now, reason: params.reason },
     updatedAt: now,
   };
   await writePrivateJson(outboundPath(options.rootDir, next.id), next);
@@ -325,6 +339,7 @@ export async function rejectTextMailroomOutbound(
     itemId: next.id,
     campaignId: next.campaignId,
     recipientHash: next.recipientHash,
+    actor: rejectedBy,
   });
   return next;
 }

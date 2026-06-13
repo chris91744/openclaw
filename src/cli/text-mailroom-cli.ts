@@ -8,6 +8,7 @@ import {
   loadTextMailroomThread,
   queueTextMailroomFollowUps,
   recordTextMailroomInbound,
+  updateTextMailroomThreadStatus,
 } from "../../extensions/bluebubbles/src/text-mailroom-inbox.js";
 import {
   approveTextMailroomOutbound,
@@ -493,6 +494,12 @@ function parseLabels(value: string | undefined): TextMailroomContactLabel[] {
     .filter(Boolean) as TextMailroomContactLabel[];
 }
 
+function assertApprovalConfirmed(params: { approveBy?: string; confirmApproval?: boolean }): void {
+  if (params.approveBy?.trim() && params.confirmApproval !== true) {
+    throw new Error("Refusing to approve without --confirm-approval");
+  }
+}
+
 function summarizeItem(item: Awaited<ReturnType<typeof listTextMailroomOutboundItems>>[number]) {
   return {
     id: item.id,
@@ -517,6 +524,21 @@ function summarizeContact(contact: Awaited<ReturnType<typeof listTextMailroomCon
     source: contact.source,
     createdAt: contact.createdAt,
     updatedAt: contact.updatedAt,
+  };
+}
+
+function summarizeThread(thread: TextMailroomThread) {
+  return {
+    threadId: thread.threadId,
+    contactId: thread.contactId,
+    senderHash: thread.senderHash,
+    status: thread.status,
+    tags: thread.tags,
+    priority: thread.priority,
+    needsReply: thread.needsReply,
+    lastInboundAt: thread.lastInboundAt,
+    messageCount: thread.messages.length,
+    updatedAt: thread.updatedAt,
   };
 }
 
@@ -754,6 +776,7 @@ export function registerTextMailroomCli(program: Command) {
     .option("--thread-id <id>", "Thread id")
     .option("--request-id <id>", "Idempotency key for safe retries")
     .option("--approve-by <name>", "Approver name; approval still does not send")
+    .option("--confirm-approval", "Confirm this command may approve the queued draft", false)
     .option("--confirm-high-risk", "Required to approve high-risk drafts", false)
     .option("--send", "Attempt sending after approval")
     .option("--confirm-send", "Confirm this command may call the sender")
@@ -771,6 +794,7 @@ export function registerTextMailroomCli(program: Command) {
         threadId?: string;
         requestId?: string;
         approveBy?: string;
+        confirmApproval?: boolean;
         confirmHighRisk?: boolean;
         send?: boolean;
         confirmSend?: boolean;
@@ -781,6 +805,7 @@ export function registerTextMailroomCli(program: Command) {
         if (opts.send === true && opts.confirmSend !== true) {
           throw new Error("Refusing to send without --confirm-send");
         }
+        assertApprovalConfirmed(opts);
 
         const rootDir = resolveRoot(root);
         const resolvedRecipient = await resolveRequestSendRecipient({
@@ -811,6 +836,7 @@ export function registerTextMailroomCli(program: Command) {
             {
               itemId: item.id,
               approvedBy: opts.approveBy,
+              confirmApproval: opts.confirmApproval,
               confirmHighRisk: opts.confirmHighRisk,
             },
           );
@@ -834,6 +860,7 @@ export function registerTextMailroomCli(program: Command) {
     .option("--risk <risk>", "low, medium, or high; inferred when omitted")
     .option("--request-id <id>", "Idempotency key for safe retries")
     .option("--approve-by <name>", "Approver name; approval still does not send")
+    .option("--confirm-approval", "Confirm this command may approve the queued draft", false)
     .option("--confirm-high-risk", "Required to approve high-risk drafts", false)
     .option("--send", "Attempt sending after approval")
     .option("--confirm-send", "Confirm this command may call the sender")
@@ -847,6 +874,7 @@ export function registerTextMailroomCli(program: Command) {
           risk?: TextMailroomRisk;
           requestId?: string;
           approveBy?: string;
+          confirmApproval?: boolean;
           confirmHighRisk?: boolean;
           send?: boolean;
           confirmSend?: boolean;
@@ -858,6 +886,7 @@ export function registerTextMailroomCli(program: Command) {
         if (opts.send === true && opts.confirmSend !== true) {
           throw new Error("Refusing to send without --confirm-send");
         }
+        assertApprovalConfirmed(opts);
 
         const rootDir = resolveRoot(root);
         const thread = await loadTextMailroomThread({ rootDir }, threadId);
@@ -886,6 +915,7 @@ export function registerTextMailroomCli(program: Command) {
             {
               itemId: item.id,
               approvedBy: opts.approveBy,
+              confirmApproval: opts.confirmApproval,
               confirmHighRisk: opts.confirmHighRisk,
             },
           );
@@ -905,15 +935,25 @@ export function registerTextMailroomCli(program: Command) {
     .description("Approve a queued text; does not send")
     .requiredOption("--by <name>", "Approver")
     .option("--body <text>", "Edited body to approve")
+    .option("--confirm-approval", "Confirm this command may approve the queued draft", false)
     .option("--confirm-high-risk", "Required to approve high-risk drafts", false)
     .action(
-      async (itemId: string, opts: { by: string; body?: string; confirmHighRisk?: boolean }) => {
+      async (
+        itemId: string,
+        opts: {
+          by: string;
+          body?: string;
+          confirmApproval?: boolean;
+          confirmHighRisk?: boolean;
+        },
+      ) => {
         const item = await approveTextMailroomOutbound(
           { rootDir: resolveRoot(root) },
           {
             itemId,
             approvedBy: opts.by,
             editedBody: opts.body,
+            confirmApproval: opts.confirmApproval,
             confirmHighRisk: opts.confirmHighRisk,
           },
         );
@@ -1019,7 +1059,7 @@ export function registerTextMailroomCli(program: Command) {
           source: opts.source,
         },
       );
-      output(root, contact, `Saved contact ${contact.contactId}`);
+      output(root, summarizeContact(contact), `Saved contact ${contact.contactId}`);
     });
 
   const campaigns = root.command("campaigns").description("Campaign authorization helpers");
@@ -1063,6 +1103,11 @@ export function registerTextMailroomCli(program: Command) {
     .option("--followups", "Allow one queued follow-up per sent item")
     .option("--followup-after-ms <ms>", "Follow-up wait window in milliseconds")
     .option("--expires-at <iso>", "Expiration timestamp")
+    .option(
+      "--confirm-authorization",
+      "Confirm this command may authorize the outbound campaign",
+      false,
+    )
     .action(
       async (opts: {
         purpose: string;
@@ -1072,12 +1117,14 @@ export function registerTextMailroomCli(program: Command) {
         followups?: boolean;
         followupAfterMs?: string;
         expiresAt?: string;
+        confirmAuthorization?: boolean;
       }) => {
         const campaign = await authorizeTextMailroomCampaign(
           { rootDir: resolveRoot(root) },
           {
             purpose: opts.purpose,
             approvedBy: opts.by,
+            confirmAuthorization: opts.confirmAuthorization,
             allowedRecipients: opts.recipient,
             maxSends: parsePositiveInt(opts.maxSends, 1),
             followupsAllowed: opts.followups === true,
@@ -1103,7 +1150,7 @@ export function registerTextMailroomCli(program: Command) {
         { rootDir: resolveRoot(root) },
         { sender: opts.from, body: opts.body, threadId: opts.threadId, source: opts.source },
       );
-      output(root, thread, `Recorded inbound ${thread.threadId}`);
+      output(root, summarizeThread(thread), `Recorded inbound ${thread.threadId}`);
     });
 
   inbox
@@ -1111,8 +1158,56 @@ export function registerTextMailroomCli(program: Command) {
     .argument("<threadId>")
     .action(async (threadId: string) => {
       const thread = await classifyTextMailroomThread({ rootDir: resolveRoot(root) }, { threadId });
-      output(root, thread, `Classified ${thread.threadId}: ${thread.tags.join(",") || "none"}`);
+      output(
+        root,
+        summarizeThread(thread),
+        `Classified ${thread.threadId}: ${thread.tags.join(",") || "none"}`,
+      );
     });
+
+  const updateThreadStatus = async (
+    threadId: string,
+    status: TextMailroomThread["status"],
+    opts: { by: string; reason?: string },
+  ) => {
+    const thread = await updateTextMailroomThreadStatus(
+      { rootDir: resolveRoot(root) },
+      {
+        threadId,
+        status,
+        updatedBy: opts.by,
+        reason: opts.reason,
+      },
+    );
+    output(root, summarizeThread(thread), `${status} ${thread.threadId}`);
+  };
+
+  inbox
+    .command("hold")
+    .argument("<threadId>")
+    .requiredOption("--by <name>", "Reviewer")
+    .option("--reason <reason>", "Reason")
+    .action((threadId: string, opts: { by: string; reason?: string }) =>
+      updateThreadStatus(threadId, "held", opts),
+    );
+
+  inbox
+    .command("close")
+    .argument("<threadId>")
+    .requiredOption("--by <name>", "Reviewer")
+    .option("--reason <reason>", "Reason")
+    .action((threadId: string, opts: { by: string; reason?: string }) =>
+      updateThreadStatus(threadId, "closed", opts),
+    );
+
+  inbox
+    .command("reopen")
+    .argument("<threadId>")
+    .requiredOption("--by <name>", "Reviewer")
+    .option("--reason <reason>", "Reason")
+    .action((threadId: string, opts: { by: string; reason?: string }) =>
+      updateThreadStatus(threadId, "open", opts),
+    );
 
   inbox.command("digest").action(async () => {
     const digest = await buildTextMailroomDigest({ rootDir: resolveRoot(root) });

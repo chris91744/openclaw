@@ -117,6 +117,7 @@ describe("Text Mailroom inbox, follow-ups, and integration signals", () => {
       {
         purpose: "Handyman outreach",
         approvedBy: "Chris",
+        confirmAuthorization: true,
         allowedRecipients: ["+15551234567"],
         maxSends: 3,
         followupsAllowed: true,
@@ -136,7 +137,7 @@ describe("Text Mailroom inbox, follow-ups, and integration signals", () => {
     );
     await approveTextMailroomOutbound(
       { rootDir },
-      { itemId: item.id, approvedBy: "Chris", confirmHighRisk: true },
+      { itemId: item.id, approvedBy: "Chris", confirmApproval: true, confirmHighRisk: true },
     );
     vi.stubEnv(TEXT_MAILROOM_SEND_OPTIN_ENV, "1");
     await sendApprovedTextMailroomOutbound({ rootDir, sender }, { itemId: item.id });
@@ -154,6 +155,7 @@ describe("Text Mailroom inbox, follow-ups, and integration signals", () => {
       {
         purpose: "Handyman outreach",
         approvedBy: "Chris",
+        confirmAuthorization: true,
         allowedRecipients: ["+15551234567"],
         maxSends: 3,
         followupsAllowed: true,
@@ -173,7 +175,7 @@ describe("Text Mailroom inbox, follow-ups, and integration signals", () => {
     );
     await approveTextMailroomOutbound(
       { rootDir },
-      { itemId: item.id, approvedBy: "Chris", confirmHighRisk: true },
+      { itemId: item.id, approvedBy: "Chris", confirmApproval: true, confirmHighRisk: true },
     );
     vi.stubEnv(TEXT_MAILROOM_SEND_OPTIN_ENV, "1");
     await sendApprovedTextMailroomOutbound(

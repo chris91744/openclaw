@@ -126,6 +126,7 @@ export type TextMailroomAuditEvent = {
   threadIdHash?: string;
   recipientHash?: string;
   bodyHash?: string;
+  actor?: string;
   note?: string;
 };
 
