@@ -67,6 +67,7 @@ This packet documents the post-Slice-3B completion branch for Claude verificatio
 - Mutating the body after approval fails closed.
 - Stale approvals fail closed.
 - Concurrent sends fail closed through an exclusive claim file.
+- Concurrent campaign sends also serialize through a campaign-level claim file, so campaign send caps cannot be overrun by parallel approved items.
 - A crash after claiming a send leaves the claim lock in place by design; manual review is required before clearing it.
 - Campaign authorization is explicit, scoped, capped, and optionally expiring.
 - Follow-up logic queues only; it never sends automatically.
