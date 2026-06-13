@@ -33,17 +33,24 @@ This packet documents the branch that moves Text Mailroom from a safe queue foun
    - The underlying sender still requires `OPENCLAW_TEXT_MAILROOM_SEND_OPTIN=1`.
    - The BlueBubbles transport still separately requires `OPENCLAW_BLUEBUBBLES_OUTBOUND_ENABLED=1`.
 
-3. Redacted readiness helper
+3. Operator shortcut for replying to an inbound text
+   - New CLI: `openclaw text-mailroom request-reply <threadId>`.
+   - Resolves the recipient from the inbox thread and queues a `conversation_reply`.
+   - Default behavior queues only.
+   - Safe summaries include the thread id and risk, but not the raw sender or body.
+   - `--send` requires `--approve-by` and `--confirm-send`, then still hits the same env gates.
+
+4. Redacted readiness helper
    - New CLI: `openclaw text-mailroom status`.
    - Reports whether BlueBubbles and Text Mailroom ingestion are configured without printing server URLs, passwords, raw phone numbers, or message bodies.
    - Reports the three outbound send gates so operators can verify that real sends remain disabled.
 
-4. Safer operator lookup helpers
+5. Safer operator lookup helpers
    - `openclaw text-mailroom contacts list` lists contact ids, labels, and names without raw phone numbers.
    - `openclaw text-mailroom campaigns list` lists campaign ids, purposes, and send counts without raw recipients.
    - `request-send --campaign-id ... --kind campaign_outreach` reuses existing campaign recipient/cap/expiry checks.
 
-5. Dry-run-first BlueBubbles config helper
+6. Dry-run-first BlueBubbles config helper
    - New CLI: `openclaw text-mailroom enable-bluebubbles-ingest`.
    - Dry-run is the default.
    - Passwords are supplied through an environment variable name, not a direct CLI argument.
@@ -61,6 +68,7 @@ This packet documents the branch that moves Text Mailroom from a safe queue foun
 - `request-send --contact-id` and `request-send --contact` resolve stored contacts internally and keep list/request summaries redacted.
 - Ambiguous `request-send --contact` lookups refuse before queueing.
 - Omitted risk is inferred in the queue layer, not just the CLI, and explicit `--risk` still overrides inference.
+- `request-reply` resolves recipients from stored threads and refuses missing `--confirm-send` before queueing any send attempt.
 - `text-mailroom status` redacts BlueBubbles server URLs, passwords, raw phone numbers, and message bodies.
 - `enable-bluebubbles-ingest` dry-runs by default and its summary redacts BlueBubbles server URLs, passwords, and allowlisted recipients.
 - Campaign sends are still bounded by allowed recipient hashes, expiry, max sends, and campaign send locks.
@@ -78,7 +86,7 @@ Focused:
   extensions/bluebubbles/src/text-mailroom-outbound.test.ts
 ```
 
-Latest result: 4 files / 88 tests passed.
+Latest result: 4 files / 90 tests passed.
 
 Broader:
 
@@ -91,7 +99,7 @@ Broader:
   src/config/config.plugin-validation.test.ts
 ```
 
-Latest result: 17 files / 329 tests passed.
+Latest result: 17 files / 331 tests passed.
 
 Format:
 

@@ -457,6 +457,98 @@ describe("text-mailroom cli", () => {
     expect(String(log.mock.calls.at(-1)?.[0])).toBe("No outbound queue items.");
   });
 
+  it("request_reply_queues_from_an_inbox_thread_without_echoing_sender_or_body", async () => {
+    const root = await makeRoot();
+    const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
+
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "inbox",
+      "record",
+      "--from",
+      "+15551234567",
+      "--body",
+      "Secret inbound body",
+      "--thread-id",
+      "handyman-thread",
+    ]);
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "--json",
+      "request-reply",
+      "handyman-thread",
+      "--body",
+      "Secret reply body",
+      "--reason",
+      "operator thread reply smoke",
+    ]);
+    const queued = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as {
+      id: string;
+      stage: string;
+      status: string;
+      kind: string;
+      threadId?: string;
+      risk: string;
+    };
+    expect(queued.id).toMatch(/^outbound_/);
+    expect(queued.stage).toBe("queued");
+    expect(queued.status).toBe("queued");
+    expect(queued.kind).toBe("conversation_reply");
+    expect(queued.threadId).toBe("handyman-thread");
+    expect(queued.risk).toBe("high");
+
+    await runCli(["text-mailroom", "--root", root, "list"]);
+    const output = log.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("operator thread reply smoke");
+    expect(output).toContain("risk=high");
+    expect(output).not.toContain("+15551234567");
+    expect(output).not.toContain("Secret inbound body");
+    expect(output).not.toContain("Secret reply body");
+  });
+
+  it("request_reply_refuses_send_without_confirm_before_queueing", async () => {
+    const root = await makeRoot();
+    const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
+
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "inbox",
+      "record",
+      "--from",
+      "+15551234567",
+      "--body",
+      "hello",
+      "--thread-id",
+      "reply-thread",
+    ]);
+
+    await expect(
+      runCli([
+        "text-mailroom",
+        "--root",
+        root,
+        "request-reply",
+        "reply-thread",
+        "--body",
+        "hello back",
+        "--reason",
+        "reply smoke",
+        "--approve-by",
+        "Chris",
+        "--send",
+      ]),
+    ).rejects.toThrow("Refusing to send without --confirm-send");
+
+    await runCli(["text-mailroom", "--root", root, "list"]);
+    expect(String(log.mock.calls.at(-1)?.[0])).toBe("No outbound queue items.");
+  });
+
   it("request_send_confirmed_attempt_still_stops_at_send_opt_in_gate", async () => {
     const root = await makeRoot();
 

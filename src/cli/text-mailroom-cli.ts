@@ -5,6 +5,7 @@ import {
   buildTextMailroomDigest,
   classifyTextMailroomThread,
   exportPrestigioTextSignals,
+  loadTextMailroomThread,
   queueTextMailroomFollowUps,
   recordTextMailroomInbound,
 } from "../../extensions/bluebubbles/src/text-mailroom-inbox.js";
@@ -386,6 +387,7 @@ function summarizeItem(item: Awaited<ReturnType<typeof listTextMailroomOutboundI
     risk: item.risk,
     campaignId: item.campaignId,
     contactId: item.contactId,
+    threadId: item.threadId,
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
     reason: item.reason,
@@ -655,6 +657,71 @@ export function registerTextMailroomCli(program: Command) {
             campaignId: opts.campaignId,
             contactId: resolvedRecipient.contactId ?? opts.contactId,
             threadId: opts.threadId,
+          },
+        );
+        let stage: "queued" | "approved" | "sent" = "queued";
+        if (opts.approveBy?.trim()) {
+          item = await approveTextMailroomOutbound(
+            { rootDir },
+            { itemId: item.id, approvedBy: opts.approveBy },
+          );
+          stage = "approved";
+        }
+        if (opts.send === true) {
+          item = await sendApprovedTextMailroomOutbound({ rootDir }, { itemId: item.id });
+          stage = "sent";
+        }
+        output(root, { stage, ...summarizeItem(item) }, `${stage} ${item.id}`);
+      },
+    );
+
+  root
+    .command("request-reply")
+    .argument("<threadId>")
+    .description("Queue a reply to an inbox thread without exposing the sender")
+    .requiredOption("--body <text>", "Reply body")
+    .requiredOption("--reason <reason>", "Why this reply is proposed")
+    .option("--source <source>", "Source/provenance", "cli")
+    .option("--risk <risk>", "low, medium, or high; inferred when omitted")
+    .option("--approve-by <name>", "Approver name; approval still does not send")
+    .option("--send", "Attempt sending after approval")
+    .option("--confirm-send", "Confirm this command may call the sender")
+    .action(
+      async (
+        threadId: string,
+        opts: {
+          body: string;
+          reason: string;
+          source?: string;
+          risk?: TextMailroomRisk;
+          approveBy?: string;
+          send?: boolean;
+          confirmSend?: boolean;
+        },
+      ) => {
+        if (opts.send === true && !opts.approveBy?.trim()) {
+          throw new Error("request-reply --send requires --approve-by <name>");
+        }
+        if (opts.send === true && opts.confirmSend !== true) {
+          throw new Error("Refusing to send without --confirm-send");
+        }
+
+        const rootDir = resolveRoot(root);
+        const thread = await loadTextMailroomThread({ rootDir }, threadId);
+        if (!thread) {
+          throw new Error("Text Mailroom thread not found");
+        }
+        let item = await proposeTextMailroomOutbound(
+          { rootDir },
+          {
+            kind: "conversation_reply",
+            recipient: thread.sender,
+            body: requireOption(opts.body, "--body"),
+            reason: requireOption(opts.reason, "--reason"),
+            source: opts.source ?? "cli",
+            risk: opts.risk,
+            contactId: thread.contactId,
+            threadId: thread.threadId,
           },
         );
         let stage: "queued" | "approved" | "sent" = "queued";
