@@ -42,13 +42,17 @@ import {
   resolveSupervisedBlueBubblesConfig,
 } from "./supervised.js";
 import { formatBlueBubblesChatTarget, isAllowedBlueBubblesSender } from "./targets.js";
+import { recordBlueBubblesTextMailroomInbound } from "./text-mailroom-bridge.js";
 
 const DEFAULT_TEXT_LIMIT = 4000;
 const invalidAckReactions = new Set<string>();
 const REPLY_DIRECTIVE_TAG_RE = /\[\[\s*(?:reply_to_current|reply_to\s*:\s*[^\]\n]+)\s*\]\]/gi;
 
 function shortHash(value: string | undefined): string {
-  return createHash("sha256").update(value ?? "").digest("hex").slice(0, 12);
+  return createHash("sha256")
+    .update(value ?? "")
+    .digest("hex")
+    .slice(0, 12);
 }
 
 export function logVerbose(
@@ -180,6 +184,15 @@ export async function processMessage(
     runtime,
     `msg sender=${message.senderId} group=${isGroup} textLen=${text.length} attachments=${attachments.length} chatGuid=${message.chatGuid ?? ""} chatId=${message.chatId ?? ""}`,
   );
+
+  await recordBlueBubblesTextMailroomInbound({
+    core,
+    runtime,
+    account,
+    message,
+    isGroup,
+    body: rawBody,
+  });
 
   const intendedSupervised = !isGroup && isBlueBubblesAccountIntendedSupervised(account);
   if (intendedSupervised) {

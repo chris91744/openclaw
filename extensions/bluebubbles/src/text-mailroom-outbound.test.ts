@@ -42,6 +42,22 @@ describe("Text Mailroom outbound approvals", () => {
     await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
   });
 
+  it("requires_explicit_confirmation_to_authorize_campaigns", async () => {
+    const rootDir = await makeRoot();
+
+    await expect(
+      authorizeTextMailroomCampaign(
+        { rootDir },
+        {
+          purpose: "Handyman outreach",
+          approvedBy: "Chris",
+          allowedRecipients: ["+15551234567"],
+          maxSends: 1,
+        },
+      ),
+    ).rejects.toThrow("campaign authorization requires confirmAuthorization");
+  });
+
   it("queues_campaign_outreach_only_inside_authorized_campaign_boundaries", async () => {
     const rootDir = await makeRoot();
     const campaign = await authorizeTextMailroomCampaign(
@@ -49,6 +65,7 @@ describe("Text Mailroom outbound approvals", () => {
       {
         purpose: "Handyman outreach",
         approvedBy: "Chris",
+        confirmAuthorization: true,
         allowedRecipients: ["+15551234567"],
         maxSends: 1,
       },
@@ -105,6 +122,221 @@ describe("Text Mailroom outbound approvals", () => {
     ).rejects.toThrow("blocked contacts");
   });
 
+  it("rejects_invalid_contact_labels_before_saving", async () => {
+    const rootDir = await makeRoot();
+
+    await expect(
+      upsertTextMailroomContact(
+        { rootDir },
+        {
+          phone: "+15551234567",
+          labels: ["vendor", "vip" as never],
+          source: "manual",
+        },
+      ),
+    ).rejects.toThrow("contact label is invalid: vip");
+  });
+
+  it("infers_risk_from_contact_labels_and_message_kind", async () => {
+    const rootDir = await makeRoot();
+    await upsertTextMailroomContact(
+      { rootDir },
+      { phone: "+15551234567", labels: ["vendor"], source: "manual" },
+    );
+    await upsertTextMailroomContact(
+      { rootDir },
+      { phone: "+15557654321", labels: ["lead"], source: "manual" },
+    );
+
+    await expect(
+      proposeTextMailroomOutbound(
+        { rootDir },
+        {
+          kind: "manual",
+          recipient: "+15550000000",
+          body: "raw number",
+          reason: "unknown recipient",
+          source: "agent",
+        },
+      ),
+    ).resolves.toMatchObject({ risk: "high" });
+    await expect(
+      proposeTextMailroomOutbound(
+        { rootDir },
+        {
+          kind: "manual",
+          recipient: "+15551234567",
+          body: "known vendor",
+          reason: "known vendor recipient",
+          source: "agent",
+        },
+      ),
+    ).resolves.toMatchObject({ risk: "low" });
+    await expect(
+      proposeTextMailroomOutbound(
+        { rootDir },
+        {
+          kind: "manual",
+          recipient: "+15557654321",
+          body: "lead",
+          reason: "lead recipient",
+          source: "agent",
+        },
+      ),
+    ).resolves.toMatchObject({ risk: "medium" });
+    await expect(
+      proposeTextMailroomOutbound(
+        { rootDir },
+        {
+          kind: "manual",
+          recipient: "+15550000000",
+          body: "downgrade blocked",
+          reason: "explicit low risk cannot downgrade unknown recipient",
+          source: "agent",
+          risk: "low",
+        },
+      ),
+    ).resolves.toMatchObject({ risk: "high" });
+    await expect(
+      proposeTextMailroomOutbound(
+        { rootDir },
+        {
+          kind: "manual",
+          recipient: "+15551234567",
+          body: "upgrade allowed",
+          reason: "explicit high risk can upgrade known recipient",
+          source: "agent",
+          risk: "high",
+        },
+      ),
+    ).resolves.toMatchObject({ risk: "high" });
+  });
+
+  it("does_not_allow_explicit_risk_to_downgrade_campaign_or_followup_items", async () => {
+    const rootDir = await makeRoot();
+    const campaign = await authorizeTextMailroomCampaign(
+      { rootDir },
+      {
+        purpose: "Handyman outreach",
+        approvedBy: "Chris",
+        confirmAuthorization: true,
+        allowedRecipients: ["+15551234567"],
+        maxSends: 2,
+        followupsAllowed: true,
+      },
+    );
+
+    await expect(
+      proposeTextMailroomOutbound(
+        { rootDir },
+        {
+          kind: "campaign_outreach",
+          recipient: "+15551234567",
+          body: "campaign",
+          campaignId: campaign.campaignId,
+          reason: "explicit low risk cannot downgrade campaign",
+          source: "agent",
+          risk: "low",
+        },
+      ),
+    ).resolves.toMatchObject({ risk: "high" });
+    await expect(
+      proposeTextMailroomOutbound(
+        { rootDir },
+        {
+          kind: "follow_up",
+          recipient: "+15551234567",
+          body: "follow up",
+          campaignId: campaign.campaignId,
+          reason: "explicit low risk cannot downgrade follow-up",
+          source: "agent",
+          risk: "low",
+        },
+      ),
+    ).resolves.toMatchObject({ risk: "high" });
+  });
+
+  it("requires_explicit_confirmation_to_approve_items_and_high_risk_items", async () => {
+    const rootDir = await makeRoot();
+    const item = await proposeTextMailroomOutbound(
+      { rootDir },
+      {
+        kind: "manual",
+        recipient: "+15550000000",
+        body: "high risk",
+        reason: "unknown recipient",
+        source: "agent",
+      },
+    );
+
+    await expect(
+      approveTextMailroomOutbound({ rootDir }, { itemId: item.id, approvedBy: "Chris" }),
+    ).rejects.toThrow("approval requires confirmApproval");
+    await expect(
+      approveTextMailroomOutbound(
+        { rootDir },
+        { itemId: item.id, approvedBy: "Chris", confirmApproval: true },
+      ),
+    ).rejects.toThrow("high-risk approval requires confirmHighRisk");
+    await expect(
+      approveTextMailroomOutbound(
+        { rootDir },
+        {
+          itemId: item.id,
+          approvedBy: "Chris",
+          confirmApproval: true,
+          confirmHighRisk: true,
+        },
+      ),
+    ).resolves.toMatchObject({
+      status: "approved",
+      approval: { highRiskConfirmed: true },
+    });
+  });
+
+  it("dedupes_retried_outbound_proposals_by_request_id", async () => {
+    const rootDir = await makeRoot();
+    const first = await proposeTextMailroomOutbound(
+      { rootDir },
+      {
+        kind: "manual",
+        recipient: "+15551234567",
+        body: "hello",
+        reason: "retry-safe request",
+        source: "agent",
+        requestId: "agent-request-1",
+      },
+    );
+    const retry = await proposeTextMailroomOutbound(
+      { rootDir },
+      {
+        kind: "manual",
+        recipient: "+1 (555) 123-4567",
+        body: "hello",
+        reason: "retry-safe request",
+        source: "agent",
+        requestId: "agent-request-1",
+      },
+    );
+
+    expect(retry.id).toBe(first.id);
+    expect(retry.requestId).toBe("agent-request-1");
+    await expect(listTextMailroomOutboundItems({ rootDir })).resolves.toHaveLength(1);
+    await expect(
+      proposeTextMailroomOutbound(
+        { rootDir },
+        {
+          kind: "manual",
+          recipient: "+15551234567",
+          body: "different body",
+          reason: "retry collision",
+          source: "agent",
+          requestId: "agent-request-1",
+        },
+      ),
+    ).rejects.toThrow("request_id already exists with different outbound payload");
+  });
+
   it("requires_approval_and_two_opt_in_flags_before_sender_can_run", async () => {
     const rootDir = await makeRoot();
     const sender = vi.fn(async () => ({ messageId: "msg-1" }));
@@ -130,7 +362,10 @@ describe("Text Mailroom outbound approvals", () => {
     ).rejects.toThrow("must be approved");
     expect(sender).not.toHaveBeenCalled();
 
-    await approveTextMailroomOutbound({ rootDir }, { itemId: item.id, approvedBy: "Chris" });
+    await approveTextMailroomOutbound(
+      { rootDir },
+      { itemId: item.id, approvedBy: "Chris", confirmApproval: true, confirmHighRisk: true },
+    );
     const sent = await sendApprovedTextMailroomOutbound({ rootDir, sender }, { itemId: item.id });
 
     expect(sent.status).toBe("sent");
@@ -152,6 +387,7 @@ describe("Text Mailroom outbound approvals", () => {
       {
         purpose: "Limited campaign",
         approvedBy: "Chris",
+        confirmAuthorization: true,
         allowedRecipients: ["+15551234567", "+15557654321"],
         maxSends: 1,
       },
@@ -178,8 +414,14 @@ describe("Text Mailroom outbound approvals", () => {
         source: "agent",
       },
     );
-    await approveTextMailroomOutbound({ rootDir }, { itemId: first.id, approvedBy: "Chris" });
-    await approveTextMailroomOutbound({ rootDir }, { itemId: second.id, approvedBy: "Chris" });
+    await approveTextMailroomOutbound(
+      { rootDir },
+      { itemId: first.id, approvedBy: "Chris", confirmApproval: true, confirmHighRisk: true },
+    );
+    await approveTextMailroomOutbound(
+      { rootDir },
+      { itemId: second.id, approvedBy: "Chris", confirmApproval: true, confirmHighRisk: true },
+    );
 
     vi.stubEnv(TEXT_MAILROOM_SEND_OPTIN_ENV, "1");
     await expect(
@@ -205,6 +447,7 @@ describe("Text Mailroom outbound approvals", () => {
       {
         purpose: "Limited campaign",
         approvedBy: "Chris",
+        confirmAuthorization: true,
         allowedRecipients: ["+15551234567", "+15557654321"],
         maxSends: 1,
       },
@@ -231,8 +474,14 @@ describe("Text Mailroom outbound approvals", () => {
         source: "agent",
       },
     );
-    await approveTextMailroomOutbound({ rootDir }, { itemId: first.id, approvedBy: "Chris" });
-    await approveTextMailroomOutbound({ rootDir }, { itemId: second.id, approvedBy: "Chris" });
+    await approveTextMailroomOutbound(
+      { rootDir },
+      { itemId: first.id, approvedBy: "Chris", confirmApproval: true, confirmHighRisk: true },
+    );
+    await approveTextMailroomOutbound(
+      { rootDir },
+      { itemId: second.id, approvedBy: "Chris", confirmApproval: true, confirmHighRisk: true },
+    );
 
     vi.stubEnv(TEXT_MAILROOM_SEND_OPTIN_ENV, "1");
     const firstSend = sendApprovedTextMailroomOutbound({ rootDir, sender }, { itemId: first.id });
@@ -260,7 +509,7 @@ describe("Text Mailroom outbound approvals", () => {
     );
     const approved = await approveTextMailroomOutbound(
       { rootDir },
-      { itemId: item.id, approvedBy: "Chris" },
+      { itemId: item.id, approvedBy: "Chris", confirmApproval: true, confirmHighRisk: true },
     );
     const tampered: TextMailroomOutboundItem = { ...approved, body: "changed after approval" };
     await writePrivateJson(
@@ -288,7 +537,10 @@ describe("Text Mailroom outbound approvals", () => {
         source: "agent",
       },
     );
-    await approveTextMailroomOutbound({ rootDir }, { itemId: item.id, approvedBy: "Chris" });
+    await approveTextMailroomOutbound(
+      { rootDir },
+      { itemId: item.id, approvedBy: "Chris", confirmApproval: true, confirmHighRisk: true },
+    );
 
     vi.setSystemTime(new Date("2026-06-12T20:00:00.000Z"));
     vi.stubEnv(TEXT_MAILROOM_SEND_OPTIN_ENV, "1");
@@ -317,7 +569,10 @@ describe("Text Mailroom outbound approvals", () => {
         source: "agent",
       },
     );
-    await approveTextMailroomOutbound({ rootDir }, { itemId: item.id, approvedBy: "Chris" });
+    await approveTextMailroomOutbound(
+      { rootDir },
+      { itemId: item.id, approvedBy: "Chris", confirmApproval: true, confirmHighRisk: true },
+    );
 
     vi.stubEnv(TEXT_MAILROOM_SEND_OPTIN_ENV, "1");
     const first = sendApprovedTextMailroomOutbound({ rootDir, sender }, { itemId: item.id });
@@ -342,6 +597,10 @@ describe("Text Mailroom outbound approvals", () => {
         source: "agent",
       },
     );
+    await expect(
+      rejectTextMailroomOutbound({ rootDir }, { itemId: item.id, rejectedBy: "   " }),
+    ).rejects.toThrow("rejection requires rejectedBy");
+
     const rejected = await rejectTextMailroomOutbound(
       { rootDir },
       { itemId: item.id, rejectedBy: "Chris", reason: "not now" },
@@ -352,6 +611,7 @@ describe("Text Mailroom outbound approvals", () => {
     expect(await mode(textMailroomPaths(rootDir).auditDir)).toBe(0o700);
     const audit = await fs.readFile(textMailroomPaths(rootDir).auditEvents, "utf8");
     expect(audit).toContain("text_mailroom.outbound.rejected");
+    expect(audit).toContain('"actor":"Chris"');
     expect(audit).not.toContain("+15551234567");
     expect(audit).not.toContain("hello");
     expect(await listTextMailroomOutboundItems({ rootDir })).toHaveLength(1);

@@ -1,5 +1,6 @@
 import path from "node:path";
 import {
+  findTextMailroomContactByRecipient,
   listTextMailroomOutboundItems,
   loadTextMailroomCampaign,
   proposeTextMailroomOutbound,
@@ -60,6 +61,9 @@ export async function recordTextMailroomInbound(
   const senderHash = hashTextMailroomRecipient(sender);
   const threadId = input.threadId?.trim() || `thread_${senderHash.slice(0, 24)}`;
   const existing = await loadTextMailroomThread(options, threadId);
+  const contact = input.contactId
+    ? null
+    : await findTextMailroomContactByRecipient(options, sender);
   const receivedAt = input.receivedAt ?? textMailroomNow(options.now);
   const message: TextMailroomInboundMessage = {
     id: textMailroomId("inbound"),
@@ -74,7 +78,7 @@ export async function recordTextMailroomInbound(
   const next: TextMailroomThread = {
     threadId,
     accountId: input.accountId ?? existing?.accountId,
-    contactId: input.contactId ?? existing?.contactId,
+    contactId: input.contactId ?? existing?.contactId ?? contact?.contactId,
     sender,
     senderHash,
     status: existing?.status ?? "open",
@@ -136,6 +140,38 @@ export async function classifyTextMailroomThread(
     type: "text_mailroom.inbound.classified",
     threadIdHash: hashTextMailroomRecipient(thread.threadId),
     recipientHash: thread.senderHash,
+  });
+  return next;
+}
+
+export async function updateTextMailroomThreadStatus(
+  options: TextMailroomStoreOptions,
+  params: {
+    threadId: string;
+    status: TextMailroomThread["status"];
+    updatedBy: string;
+    reason?: string;
+  },
+): Promise<TextMailroomThread> {
+  const updatedBy = params.updatedBy.trim();
+  if (!updatedBy) {
+    throw new Error("Text Mailroom thread status update requires updatedBy");
+  }
+  const thread = await loadRequiredThread(options, params.threadId);
+  const reason = params.reason?.trim();
+  const next: TextMailroomThread = {
+    ...thread,
+    status: params.status,
+    needsReply: params.status === "open" ? thread.needsReply : false,
+    updatedAt: textMailroomNow(options.now),
+  };
+  await writePrivateJson(threadPath(options.rootDir, thread.threadId), next);
+  await appendTextMailroomAudit(options, {
+    type: "text_mailroom.inbound.status_updated",
+    threadIdHash: hashTextMailroomRecipient(thread.threadId),
+    recipientHash: thread.senderHash,
+    actor: updatedBy,
+    note: reason ? `status=${params.status}; reason=${reason}` : `status=${params.status}`,
   });
   return next;
 }

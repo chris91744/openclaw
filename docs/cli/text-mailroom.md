@@ -19,6 +19,58 @@ OPENCLAW_TEXT_MAILROOM_DIR=/path/to/store openclaw text-mailroom ...
 
 The store uses private directories (`0700`) and private JSON/NDJSON files (`0600`).
 
+## Status
+
+Check Text Mailroom readiness without printing BlueBubbles passwords, server URLs, raw phone numbers, or message bodies:
+
+```bash
+openclaw text-mailroom status
+```
+
+Use JSON for verifiers:
+
+```bash
+openclaw text-mailroom --json status
+```
+
+The status output reports the store root, whether `channels.bluebubbles` is present/configured, whether `channels.bluebubbles.textMailroom.enabled` is on, allowlist counts, group policy, and the three outbound send gates.
+
+Check local queue health without raw phone numbers or message bodies:
+
+```bash
+openclaw text-mailroom health
+```
+
+The health output reports contacts, campaigns, inbox thread counts, outbound status counts, and send claim locks.
+
+## Enable BlueBubbles Ingest
+
+Plan the live BlueBubbles -> Text Mailroom config change without writing it:
+
+```bash
+BLUEBUBBLES_PASSWORD="..." \
+openclaw text-mailroom enable-bluebubbles-ingest \
+  --server-url "http://host.docker.internal:1234" \
+  --password-env BLUEBUBBLES_PASSWORD \
+  --allow-from-file ~/.openclaw/credentials/bluebubbles-default-allowFrom.json
+```
+
+The command is dry-run by default and prints only a redacted summary. It does not print the server URL, password, or allowlisted recipients.
+
+Apply requires both `--apply` and `--confirm-live-config-change`:
+
+```bash
+BLUEBUBBLES_PASSWORD="..." \
+openclaw text-mailroom enable-bluebubbles-ingest \
+  --server-url "http://host.docker.internal:1234" \
+  --password-env BLUEBUBBLES_PASSWORD \
+  --allow-from-file ~/.openclaw/credentials/bluebubbles-default-allowFrom.json \
+  --apply \
+  --confirm-live-config-change
+```
+
+This writes `channels.bluebubbles` with `dmPolicy="allowlist"`, `groupPolicy="disabled"`, and `textMailroom.enabled=true`. It does not set `OPENCLAW_TEXT_MAILROOM_SEND_OPTIN` or `OPENCLAW_BLUEBUBBLES_OUTBOUND_ENABLED`.
+
 ## Queue And Approval
 
 Queue a proposed text without sending:
@@ -29,6 +81,49 @@ openclaw text-mailroom propose \
   --body "Hi, are you available for a small job?" \
   --reason "authorized handyman campaign"
 ```
+
+For the "text this person for me" operator path, use `request-send`. By default it only queues:
+
+```bash
+openclaw text-mailroom request-send \
+  --to "+15551234567" \
+  --body "Hi, are you available for a small job?" \
+  --reason "Chris requested handyman outreach"
+```
+
+If the person is already saved as a Text Mailroom contact, use `--contact-id` instead of retyping the raw phone number:
+
+```bash
+openclaw text-mailroom request-send \
+  --contact-id contact_... \
+  --body "Hi, are you available for a small job?" \
+  --reason "Chris requested handyman outreach"
+```
+
+You can also search first and then queue by a unique saved name fragment:
+
+```bash
+openclaw text-mailroom contacts search "marina handyman"
+openclaw text-mailroom request-send \
+  --contact "marina handyman" \
+  --body "Hi, are you available for a small job?" \
+  --reason "Chris requested handyman outreach"
+```
+
+Ambiguous saved-contact matches fail closed and require `--contact-id`.
+
+It can also approve in the same command without sending:
+
+```bash
+openclaw text-mailroom request-send \
+  --to "+15551234567" \
+  --body "Hi, are you available for a small job?" \
+  --reason "Chris requested handyman outreach" \
+  --approve-by Chris \
+  --confirm-approval
+```
+
+Adding `--send` is still blocked unless `--confirm-send` is present and both send opt-in environment variables are enabled.
 
 List queued items without raw recipient or body:
 
@@ -45,7 +140,7 @@ openclaw text-mailroom show outbound_...
 Approve without sending:
 
 ```bash
-openclaw text-mailroom approve outbound_... --by Chris
+openclaw text-mailroom approve outbound_... --by Chris --confirm-approval
 ```
 
 Reject:
@@ -80,6 +175,20 @@ openclaw text-mailroom contacts upsert \
   --source "craigslist"
 ```
 
+Allowed labels are `known`, `vendor`, `client`, `lead`, `personal`, `unknown`, and `blocked`; invalid labels fail before saving.
+
+List contacts without raw phone numbers:
+
+```bash
+openclaw text-mailroom contacts list
+```
+
+Search saved contacts without raw phone numbers:
+
+```bash
+openclaw text-mailroom contacts search "marina handyman"
+```
+
 Authorize a bounded outreach campaign:
 
 ```bash
@@ -90,10 +199,30 @@ openclaw text-mailroom campaigns authorize \
   --recipient "+15557654321" \
   --max-sends 4 \
   --followups \
-  --followup-after-ms 172800000
+  --followup-after-ms 172800000 \
+  --confirm-authorization
+```
+
+List campaigns without raw recipients:
+
+```bash
+openclaw text-mailroom campaigns list
 ```
 
 Campaign sends require the recipient hash to be in the campaign allowlist, the campaign to be unexpired, and the send count to stay under `maxSends`.
+
+Queue a text inside an approved campaign:
+
+```bash
+openclaw text-mailroom request-send \
+  --kind campaign_outreach \
+  --campaign-id campaign_... \
+  --to "+15551234567" \
+  --body "Hi, are you available for a small job?" \
+  --reason "approved handyman campaign"
+```
+
+Approval and campaign authorization are deliberately separate from queueing. `--approve-by` requires `--confirm-approval`, high-risk drafts still also require `--confirm-high-risk`, and campaign creation requires `--confirm-authorization`.
 
 ## Inbox And Follow-Ups
 
@@ -112,6 +241,16 @@ Classify and digest:
 openclaw text-mailroom inbox classify client-thread
 openclaw text-mailroom inbox digest
 ```
+
+Hold, close, or reopen a thread:
+
+```bash
+openclaw text-mailroom inbox hold client-thread --by Chris --reason "waiting"
+openclaw text-mailroom inbox close client-thread --by Chris --reason "done"
+openclaw text-mailroom inbox reopen client-thread --by Chris
+```
+
+Held and closed threads refuse `request-reply` before queueing a draft.
 
 Queue due follow-ups for campaigns that explicitly allow follow-ups:
 

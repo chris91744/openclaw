@@ -61,6 +61,7 @@ export type TextMailroomApproval = {
   recipientHash: string;
   bodyHash: string;
   campaignId?: string;
+  highRiskConfirmed?: boolean;
 };
 
 export type TextMailroomOutboundItem = {
@@ -75,6 +76,7 @@ export type TextMailroomOutboundItem = {
   campaignId?: string;
   contactId?: string;
   threadId?: string;
+  requestId?: string;
   reason: string;
   source: string;
   risk: TextMailroomRisk;
@@ -124,6 +126,7 @@ export type TextMailroomAuditEvent = {
   threadIdHash?: string;
   recipientHash?: string;
   bodyHash?: string;
+  actor?: string;
   note?: string;
 };
 

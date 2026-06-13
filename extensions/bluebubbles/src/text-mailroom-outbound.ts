@@ -52,6 +52,7 @@ type ContactInput = {
 type CampaignInput = {
   purpose: string;
   approvedBy: string;
+  confirmAuthorization?: boolean;
   allowedRecipients: string[];
   maxSends: number;
   followupsAllowed?: boolean;
@@ -70,10 +71,20 @@ type ProposalInput = {
   campaignId?: string;
   contactId?: string;
   threadId?: string;
+  requestId?: string;
   requestedBy?: string;
 };
 
 const DEFAULT_MAX_APPROVAL_AGE_MS = 6 * 60 * 60 * 1000;
+const VALID_CONTACT_LABELS = new Set<TextMailroomContactLabel>([
+  "blocked",
+  "client",
+  "known",
+  "lead",
+  "personal",
+  "unknown",
+  "vendor",
+]);
 
 export async function upsertTextMailroomContact(
   options: TextMailroomStoreOptions,
@@ -108,7 +119,9 @@ export async function authorizeTextMailroomCampaign(
   options: TextMailroomStoreOptions,
   input: CampaignInput,
 ): Promise<TextMailroomCampaign> {
-  await ensureTextMailroomStore(options.rootDir);
+  if (input.confirmAuthorization !== true) {
+    throw new Error("Text Mailroom campaign authorization requires confirmAuthorization");
+  }
   if (!input.approvedBy.trim()) {
     throw new Error("Text Mailroom campaign approval requires approvedBy");
   }
@@ -124,6 +137,7 @@ export async function authorizeTextMailroomCampaign(
   if (allowedRecipientHashes.length === 0) {
     throw new Error("Text Mailroom campaign requires at least one allowed recipient");
   }
+  await ensureTextMailroomStore(options.rootDir);
   const now = textMailroomNow(options.now);
   const campaign: TextMailroomCampaign = {
     campaignId: textMailroomId("campaign"),
@@ -144,6 +158,7 @@ export async function authorizeTextMailroomCampaign(
   await appendTextMailroomAudit(options, {
     type: "text_mailroom.campaign.authorized",
     campaignId: campaign.campaignId,
+    actor: campaign.approvedBy,
   });
   return campaign;
 }
@@ -162,6 +177,7 @@ export async function proposeTextMailroomOutbound(
   }
   const recipient = normalizeTextMailroomPhone(input.recipient);
   const recipientHash = hashTextMailroomRecipient(recipient);
+  const bodyHash = hashTextMailroomBody(body);
   const contact = input.contactId
     ? await loadTextMailroomContact(options, input.contactId)
     : await findContactByPhoneHash(options, recipientHash);
@@ -178,6 +194,29 @@ export async function proposeTextMailroomOutbound(
     }
     validateCampaignForRecipient(campaign, recipientHash, options);
   }
+  const requestId = normalizeRequestId(input.requestId);
+  if (requestId) {
+    const existing = await findOutboundByRequestId(options, requestId);
+    if (existing) {
+      assertMatchingIdempotentRequest(existing, {
+        kind: input.kind,
+        recipientHash,
+        bodyHash,
+        campaignId: input.campaignId,
+        contactId: contact?.contactId ?? input.contactId,
+        threadId: input.threadId?.trim() || undefined,
+      });
+      await appendTextMailroomAudit(options, {
+        type: "text_mailroom.outbound.deduped",
+        itemId: existing.id,
+        campaignId: existing.campaignId,
+        contactId: existing.contactId,
+        recipientHash: existing.recipientHash,
+        bodyHash: existing.bodyHash,
+      });
+      return existing;
+    }
+  }
   const now = textMailroomNow(options.now);
   const item: TextMailroomOutboundItem = {
     id: textMailroomId("outbound"),
@@ -187,13 +226,14 @@ export async function proposeTextMailroomOutbound(
     recipient,
     recipientHash,
     body,
-    bodyHash: hashTextMailroomBody(body),
+    bodyHash,
     campaignId: input.campaignId,
     contactId: contact?.contactId ?? input.contactId,
     threadId: input.threadId?.trim() || undefined,
+    requestId,
     reason: input.reason.trim(),
     source: input.source.trim() || "agent",
-    risk: input.risk ?? "medium",
+    risk: inferOutboundRisk(input, contact),
     requestedBy: input.requestedBy?.trim() || undefined,
     createdAt: now,
     updatedAt: now,
@@ -212,8 +252,17 @@ export async function proposeTextMailroomOutbound(
 
 export async function approveTextMailroomOutbound(
   options: TextMailroomStoreOptions,
-  params: { itemId: string; approvedBy: string; editedBody?: string },
+  params: {
+    itemId: string;
+    approvedBy: string;
+    editedBody?: string;
+    confirmApproval?: boolean;
+    confirmHighRisk?: boolean;
+  },
 ): Promise<TextMailroomOutboundItem> {
+  if (params.confirmApproval !== true) {
+    throw new Error("Text Mailroom approval requires confirmApproval");
+  }
   const item = await loadRequiredOutbound(options, params.itemId);
   if (item.status !== "queued") {
     throw new Error(
@@ -222,6 +271,9 @@ export async function approveTextMailroomOutbound(
   }
   if (!params.approvedBy.trim()) {
     throw new Error("Text Mailroom approval requires approvedBy");
+  }
+  if (item.risk === "high" && params.confirmHighRisk !== true) {
+    throw new Error("Text Mailroom high-risk approval requires confirmHighRisk");
   }
   const body = params.editedBody?.trim() || item.body;
   if (!body.trim()) {
@@ -246,6 +298,7 @@ export async function approveTextMailroomOutbound(
       recipientHash: item.recipientHash,
       bodyHash: hashTextMailroomBody(body),
       campaignId: item.campaignId,
+      ...(item.risk === "high" ? { highRiskConfirmed: true } : {}),
     },
     updatedAt: now,
   };
@@ -256,6 +309,7 @@ export async function approveTextMailroomOutbound(
     campaignId: next.campaignId,
     recipientHash: next.recipientHash,
     bodyHash: next.bodyHash,
+    actor: next.approval.approvedBy,
   });
   return next;
 }
@@ -264,6 +318,10 @@ export async function rejectTextMailroomOutbound(
   options: TextMailroomStoreOptions,
   params: { itemId: string; rejectedBy: string; reason?: string },
 ): Promise<TextMailroomOutboundItem> {
+  const rejectedBy = params.rejectedBy.trim();
+  if (!rejectedBy) {
+    throw new Error("Text Mailroom rejection requires rejectedBy");
+  }
   const item = await loadRequiredOutbound(options, params.itemId);
   if (item.status === "sent" || item.status === "sending") {
     throw new Error(`Text Mailroom cannot reject item with status ${item.status}`);
@@ -272,7 +330,7 @@ export async function rejectTextMailroomOutbound(
   const next: TextMailroomOutboundItem = {
     ...item,
     status: "rejected",
-    rejection: { rejectedBy: params.rejectedBy.trim(), rejectedAt: now, reason: params.reason },
+    rejection: { rejectedBy, rejectedAt: now, reason: params.reason },
     updatedAt: now,
   };
   await writePrivateJson(outboundPath(options.rootDir, next.id), next);
@@ -281,6 +339,7 @@ export async function rejectTextMailroomOutbound(
     itemId: next.id,
     campaignId: next.campaignId,
     recipientHash: next.recipientHash,
+    actor: rejectedBy,
   });
   return next;
 }
@@ -377,6 +436,29 @@ export async function listTextMailroomOutboundItems(
   return (await listPrivateJson<TextMailroomOutboundItem>(paths.outboundItems)).toSorted((a, b) =>
     a.createdAt.localeCompare(b.createdAt),
   );
+}
+
+export async function listTextMailroomContacts(
+  options: TextMailroomStoreOptions,
+): Promise<TextMailroomContact[]> {
+  return (
+    await listPrivateJson<TextMailroomContact>(textMailroomPaths(options.rootDir).contacts)
+  ).toSorted((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+export async function findTextMailroomContactByRecipient(
+  options: TextMailroomStoreOptions,
+  recipient: string,
+): Promise<TextMailroomContact | null> {
+  return findContactByPhoneHash(options, hashTextMailroomRecipient(recipient));
+}
+
+export async function listTextMailroomCampaigns(
+  options: TextMailroomStoreOptions,
+): Promise<TextMailroomCampaign[]> {
+  return (
+    await listPrivateJson<TextMailroomCampaign>(textMailroomPaths(options.rootDir).campaigns)
+  ).toSorted((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
 export async function loadTextMailroomOutboundItem(
@@ -537,6 +619,48 @@ async function findContactByPhoneHash(
   return contacts.find((contact) => contact.phoneHash === phoneHash) ?? null;
 }
 
+async function findOutboundByRequestId(
+  options: TextMailroomStoreOptions,
+  requestId: string,
+): Promise<TextMailroomOutboundItem | null> {
+  const items = await listTextMailroomOutboundItems(options);
+  return items.find((item) => item.requestId === requestId) ?? null;
+}
+
+function assertMatchingIdempotentRequest(
+  existing: TextMailroomOutboundItem,
+  input: {
+    kind: TextMailroomOutboundKind;
+    recipientHash: string;
+    bodyHash: string;
+    campaignId?: string;
+    contactId?: string;
+    threadId?: string;
+  },
+): void {
+  const matches =
+    existing.kind === input.kind &&
+    existing.recipientHash === input.recipientHash &&
+    existing.bodyHash === input.bodyHash &&
+    (existing.campaignId ?? "") === (input.campaignId ?? "") &&
+    (existing.contactId ?? "") === (input.contactId ?? "") &&
+    (existing.threadId ?? "") === (input.threadId ?? "");
+  if (!matches) {
+    throw new Error("Text Mailroom request_id already exists with different outbound payload");
+  }
+}
+
+function normalizeRequestId(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  if (trimmed.length > 160) {
+    throw new Error("Text Mailroom request_id is too long");
+  }
+  return trimmed;
+}
+
 function validateCampaignForRecipient(
   campaign: TextMailroomCampaign,
   recipientHash: string,
@@ -561,9 +685,55 @@ function validateCampaignForRecipient(
 }
 
 function normalizeLabels(labels: TextMailroomContactLabel[]): TextMailroomContactLabel[] {
-  return Array.from(
-    new Set<TextMailroomContactLabel>(labels.length > 0 ? labels : ["unknown"]),
-  ).sort();
+  const normalized =
+    labels.length > 0 ? labels : (["unknown"] satisfies TextMailroomContactLabel[]);
+  for (const label of normalized) {
+    if (!VALID_CONTACT_LABELS.has(label)) {
+      throw new Error(`Text Mailroom contact label is invalid: ${label}`);
+    }
+  }
+  return Array.from(new Set<TextMailroomContactLabel>(normalized)).sort();
+}
+
+function inferOutboundRisk(
+  input: ProposalInput,
+  contact: TextMailroomContact | null | undefined,
+): TextMailroomRisk {
+  return maxOutboundRisk(inferDefaultOutboundRisk(input, contact), input.risk);
+}
+
+function inferDefaultOutboundRisk(
+  input: ProposalInput,
+  contact: TextMailroomContact | null | undefined,
+): TextMailroomRisk {
+  if (input.kind === "campaign_outreach" || input.kind === "follow_up") {
+    return "high";
+  }
+  if (!contact || contact.labels.includes("unknown")) {
+    return "high";
+  }
+  if (contact.labels.includes("lead") || contact.labels.includes("personal")) {
+    return "medium";
+  }
+  if (
+    contact.labels.includes("client") ||
+    contact.labels.includes("known") ||
+    contact.labels.includes("vendor")
+  ) {
+    return "low";
+  }
+  return "medium";
+}
+
+function maxOutboundRisk(
+  inferred: TextMailroomRisk,
+  explicit: TextMailroomRisk | undefined,
+): TextMailroomRisk {
+  if (!explicit) {
+    return inferred;
+  }
+  const rank: Record<TextMailroomRisk, number> = { low: 0, medium: 1, high: 2 };
+  return rank[explicit] > rank[inferred] ? explicit : inferred;
 }
 
 function contactPath(rootDir: string, contactId: string): string {

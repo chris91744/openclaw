@@ -1,9 +1,9 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk";
+import { EventEmitter } from "node:events";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk";
-import { EventEmitter } from "node:events";
 import { removeAckReactionAfterReply, shouldAckReaction } from "openclaw/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ResolvedBlueBubblesAccount } from "./accounts.js";
@@ -903,6 +903,78 @@ describe("BlueBubbles webhook monitor", () => {
       expect(mockDispatchReplyWithBufferedBlockDispatcher).not.toHaveBeenCalled();
     });
 
+    it("records_text_mailroom_inbound_before_dm_allowlist_blocks_agent_reply", async () => {
+      const account = createMockAccount({
+        dmPolicy: "allowlist",
+        allowFrom: ["+15559999999"],
+        textMailroom: {
+          enabled: true,
+        },
+      });
+      const config: OpenClawConfig = {};
+      const core = createMockRuntime();
+      setBlueBubblesRuntime(core);
+
+      unregister = registerBlueBubblesWebhookTarget({
+        account,
+        config,
+        runtime: { log: vi.fn(), error: vi.fn() },
+        core,
+        path: "/bluebubbles-webhook",
+      });
+
+      const payload = {
+        type: "new-message",
+        data: {
+          text: "Can you send a Prestigio quote today?",
+          handle: { address: "+15551234567" },
+          isGroup: false,
+          isFromMe: false,
+          guid: "msg-text-mailroom-1",
+          date: Date.now(),
+        },
+      };
+
+      const req = createMockRequest("POST", "/bluebubbles-webhook", payload);
+      const res = createMockResponse();
+
+      await handleBlueBubblesWebhookRequest(req, res);
+      await flushAsync();
+
+      expect(res.statusCode).toBe(200);
+      expect(mockDispatchReplyWithBufferedBlockDispatcher).not.toHaveBeenCalled();
+
+      const threadsDir = path.join(mockStateDir, "workspace", "text-mailroom", "inbox", "threads");
+      let entries: string[] = [];
+      await vi.waitFor(async () => {
+        entries = await fs.readdir(threadsDir);
+        expect(entries).toHaveLength(1);
+      });
+      expect(entries).toHaveLength(1);
+      const threadRaw = await fs.readFile(path.join(threadsDir, entries[0] ?? ""), "utf8");
+      const thread = JSON.parse(threadRaw) as {
+        accountId: string;
+        sender: string;
+        tags: string[];
+        needsReply: boolean;
+        summary: string;
+      };
+      expect(thread.accountId).toBe("default");
+      expect(thread.sender).toBe("+15551234567");
+      expect(thread.tags).toEqual(expect.arrayContaining(["prestigio", "urgent"]));
+      expect(thread.needsReply).toBe(true);
+      expect(thread.summary).toBe("Can you send a Prestigio quote today?");
+
+      const audit = await fs.readFile(
+        path.join(mockStateDir, "workspace", "text-mailroom", "audit", "events.ndjson"),
+        "utf8",
+      );
+      expect(audit).toContain("text_mailroom.inbound.recorded");
+      expect(audit).toContain("text_mailroom.inbound.classified");
+      expect(audit).not.toContain("+15551234567");
+      expect(audit).not.toContain("Can you send a Prestigio quote today?");
+    });
+
     it("triggers pairing flow for unknown sender when dmPolicy=pairing", async () => {
       // Note: empty allowFrom = allow all. To trigger pairing, we need a non-empty
       // allowlist that doesn't include the sender
@@ -1197,7 +1269,9 @@ describe("BlueBubbles webhook monitor", () => {
       expect(mockUpsertPairingRequest).not.toHaveBeenCalled();
       expect(sendMessageBlueBubbles).not.toHaveBeenCalled();
       expect(mockSendMessageTelegram).not.toHaveBeenCalled();
-      expect(JSON.stringify(runtime.log.mock.calls)).not.toContain("SENTINEL supervised disabled body");
+      expect(JSON.stringify(runtime.log.mock.calls)).not.toContain(
+        "SENTINEL supervised disabled body",
+      );
     });
 
     it("audit_and_logs_never_contain_message_body", async () => {

@@ -32,6 +32,16 @@ const bluebubblesSupervisedRepliesSchema = z
   })
   .optional();
 
+const bluebubblesTextMailroomSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    rootDir: z.string().optional(),
+    includeGroups: z.boolean().optional(),
+    autoClassify: z.boolean().optional(),
+    exportPrestigio: z.boolean().optional(),
+  })
+  .optional();
+
 const bluebubblesAccountSchema = z.object({
   name: z.string().optional(),
   enabled: z.boolean().optional(),
@@ -41,6 +51,7 @@ const bluebubblesAccountSchema = z.object({
   webhookPath: z.string().optional(),
   dmPolicy: z.enum(["pairing", "allowlist", "open", "disabled"]).optional(),
   supervisedReplies: bluebubblesSupervisedRepliesSchema,
+  textMailroom: bluebubblesTextMailroomSchema,
   allowFrom: z.array(allowFromEntry).optional(),
   groupAllowFrom: z.array(allowFromEntry).optional(),
   groupPolicy: z.enum(["open", "disabled", "allowlist"]).optional(),
