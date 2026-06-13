@@ -30,6 +30,7 @@ This packet documents the branch that moves Text Mailroom from a safe queue foun
    - Ambiguous contact lookups fail closed and require `--contact-id`.
    - Supports `--request-id <id>` so agent retries return the existing draft instead of queueing duplicates.
    - Risk is inferred when `--risk` is omitted: raw/unknown recipients are high risk, leads/personal contacts are medium risk, known/vendor/client contacts are low risk, and campaign/follow-up sends are high risk.
+   - Explicit `--risk` can upgrade risk, but it cannot downgrade the inferred risk.
    - High-risk drafts require `--confirm-high-risk` before approval.
    - `--approve-by Chris` approves without sending.
    - `--send` requires `--confirm-send` before any send attempt.
@@ -74,7 +75,7 @@ This packet documents the branch that moves Text Mailroom from a safe queue foun
 - The BlueBubbles transport remains separately env-gated.
 - `request-send --contact-id` and `request-send --contact` resolve stored contacts internally and keep list/request summaries redacted.
 - Ambiguous `request-send --contact` lookups refuse before queueing.
-- Omitted risk is inferred in the queue layer, not just the CLI, and explicit `--risk` still overrides inference.
+- Omitted risk is inferred in the queue layer, not just the CLI, and explicit `--risk` can only make the stored risk stricter.
 - `request-reply` resolves recipients from stored threads and refuses missing `--confirm-send` before queueing any send attempt.
 - High-risk approval is enforced in the shared approval layer, so CLI and future callers must explicitly confirm high-risk drafts before approval.
 - Idempotency is enforced in the shared proposal layer: same `requestId` plus same payload returns the existing item, while same `requestId` plus different recipient/body/kind fails closed.
@@ -95,7 +96,7 @@ Focused:
   extensions/bluebubbles/src/text-mailroom-outbound.test.ts
 ```
 
-Latest result: 4 files / 96 tests passed.
+Latest result: 4 files / 98 tests passed.
 
 Broader:
 
@@ -108,7 +109,7 @@ Broader:
   src/config/config.plugin-validation.test.ts
 ```
 
-Latest result: 17 files / 337 tests passed.
+Latest result: 17 files / 339 tests passed.
 
 Format:
 

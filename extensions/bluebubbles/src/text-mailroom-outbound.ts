@@ -670,9 +670,13 @@ function inferOutboundRisk(
   input: ProposalInput,
   contact: TextMailroomContact | null | undefined,
 ): TextMailroomRisk {
-  if (input.risk) {
-    return input.risk;
-  }
+  return maxOutboundRisk(inferDefaultOutboundRisk(input, contact), input.risk);
+}
+
+function inferDefaultOutboundRisk(
+  input: ProposalInput,
+  contact: TextMailroomContact | null | undefined,
+): TextMailroomRisk {
   if (input.kind === "campaign_outreach" || input.kind === "follow_up") {
     return "high";
   }
@@ -690,6 +694,17 @@ function inferOutboundRisk(
     return "low";
   }
   return "medium";
+}
+
+function maxOutboundRisk(
+  inferred: TextMailroomRisk,
+  explicit: TextMailroomRisk | undefined,
+): TextMailroomRisk {
+  if (!explicit) {
+    return inferred;
+  }
+  const rank: Record<TextMailroomRisk, number> = { low: 0, medium: 1, high: 2 };
+  return rank[explicit] > rank[inferred] ? explicit : inferred;
 }
 
 function contactPath(rootDir: string, contactId: string): string {

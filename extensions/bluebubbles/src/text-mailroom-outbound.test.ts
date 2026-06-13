@@ -158,13 +158,69 @@ describe("Text Mailroom outbound approvals", () => {
         {
           kind: "manual",
           recipient: "+15550000000",
-          body: "override",
-          reason: "explicit risk",
+          body: "downgrade blocked",
+          reason: "explicit low risk cannot downgrade unknown recipient",
           source: "agent",
           risk: "low",
         },
       ),
-    ).resolves.toMatchObject({ risk: "low" });
+    ).resolves.toMatchObject({ risk: "high" });
+    await expect(
+      proposeTextMailroomOutbound(
+        { rootDir },
+        {
+          kind: "manual",
+          recipient: "+15551234567",
+          body: "upgrade allowed",
+          reason: "explicit high risk can upgrade known recipient",
+          source: "agent",
+          risk: "high",
+        },
+      ),
+    ).resolves.toMatchObject({ risk: "high" });
+  });
+
+  it("does_not_allow_explicit_risk_to_downgrade_campaign_or_followup_items", async () => {
+    const rootDir = await makeRoot();
+    const campaign = await authorizeTextMailroomCampaign(
+      { rootDir },
+      {
+        purpose: "Handyman outreach",
+        approvedBy: "Chris",
+        allowedRecipients: ["+15551234567"],
+        maxSends: 2,
+        followupsAllowed: true,
+      },
+    );
+
+    await expect(
+      proposeTextMailroomOutbound(
+        { rootDir },
+        {
+          kind: "campaign_outreach",
+          recipient: "+15551234567",
+          body: "campaign",
+          campaignId: campaign.campaignId,
+          reason: "explicit low risk cannot downgrade campaign",
+          source: "agent",
+          risk: "low",
+        },
+      ),
+    ).resolves.toMatchObject({ risk: "high" });
+    await expect(
+      proposeTextMailroomOutbound(
+        { rootDir },
+        {
+          kind: "follow_up",
+          recipient: "+15551234567",
+          body: "follow up",
+          campaignId: campaign.campaignId,
+          reason: "explicit low risk cannot downgrade follow-up",
+          source: "agent",
+          risk: "low",
+        },
+      ),
+    ).resolves.toMatchObject({ risk: "high" });
   });
 
   it("requires_explicit_confirmation_to_approve_high_risk_items", async () => {

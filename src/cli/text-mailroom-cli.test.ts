@@ -616,6 +616,29 @@ describe("text-mailroom cli", () => {
     expect(String(log.mock.calls.at(-1)?.[0])).toContain(`Approved ${queued.id}`);
   });
 
+  it("request_send_does_not_allow_explicit_risk_to_downgrade_unknown_recipients", async () => {
+    const root = await makeRoot();
+    const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
+
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "--json",
+      "request-send",
+      "--to",
+      "+15551234567",
+      "--body",
+      "Risk downgrade body",
+      "--reason",
+      "risk downgrade smoke",
+      "--risk",
+      "low",
+    ]);
+    const queued = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as { risk: string };
+    expect(queued.risk).toBe("high");
+  });
+
   it("request_reply_queues_from_an_inbox_thread_without_echoing_sender_or_body", async () => {
     const root = await makeRoot();
     const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
