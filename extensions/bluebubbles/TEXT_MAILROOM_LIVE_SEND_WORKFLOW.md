@@ -23,6 +23,8 @@ This packet documents the branch that moves Text Mailroom from a safe queue foun
 2. Operator shortcut for "text this person for me"
    - New CLI: `openclaw text-mailroom request-send`.
    - Default behavior queues only.
+   - Supports `--contact-id contact_...` so saved contacts can be queued without retyping raw phone numbers.
+   - `--to` and `--contact-id` are mutually exclusive to avoid recipient/contact mismatch.
    - `--approve-by Chris` approves without sending.
    - `--send` requires `--confirm-send` before any send attempt.
    - The underlying sender still requires `OPENCLAW_TEXT_MAILROOM_SEND_OPTIN=1`.
@@ -53,6 +55,7 @@ This packet documents the branch that moves Text Mailroom from a safe queue foun
 - Inbound ingestion is opt-in via config and records local store files only.
 - Text Mailroom send remains approval-bound and env-gated.
 - The BlueBubbles transport remains separately env-gated.
+- `request-send --contact-id` resolves the stored contact internally and keeps list/request summaries redacted.
 - `text-mailroom status` redacts BlueBubbles server URLs, passwords, raw phone numbers, and message bodies.
 - `enable-bluebubbles-ingest` dry-runs by default and its summary redacts BlueBubbles server URLs, passwords, and allowlisted recipients.
 - Campaign sends are still bounded by allowed recipient hashes, expiry, max sends, and campaign send locks.
@@ -70,7 +73,7 @@ Focused:
   extensions/bluebubbles/src/text-mailroom-outbound.test.ts
 ```
 
-Latest result: 4 files / 83 tests passed.
+Latest result: 4 files / 85 tests passed.
 
 Broader:
 
@@ -83,7 +86,7 @@ Broader:
   src/config/config.plugin-validation.test.ts
 ```
 
-Latest result: 17 files / 324 tests passed.
+Latest result: 17 files / 326 tests passed.
 
 Format:
 

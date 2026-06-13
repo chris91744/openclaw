@@ -295,6 +295,26 @@ function requireOption(value: string | undefined, name: string): string {
   return trimmed;
 }
 
+async function resolveRequestSendRecipient(params: {
+  rootDir: string;
+  to?: string;
+  contactId?: string;
+}): Promise<string> {
+  const contactId = params.contactId?.trim();
+  const to = params.to?.trim();
+  if (contactId) {
+    if (to) {
+      throw new Error("request-send accepts either --to or --contact-id, not both");
+    }
+    const contact = await loadTextMailroomContact({ rootDir: params.rootDir }, contactId);
+    if (!contact) {
+      throw new Error("Text Mailroom contact not found");
+    }
+    return contact.phone;
+  }
+  return requireOption(to, "--to or --contact-id");
+}
+
 function parsePositiveInt(value: string | undefined, fallback: number): number {
   if (!value) {
     return fallback;
@@ -531,7 +551,7 @@ export function registerTextMailroomCli(program: Command) {
   root
     .command("request-send")
     .description("Queue a text request, optionally approve it, and optionally attempt send")
-    .requiredOption("--to <recipient>", "Recipient phone/handle")
+    .option("--to <recipient>", "Recipient phone/handle")
     .requiredOption("--body <text>", "Message body")
     .requiredOption("--reason <reason>", "Why this text is proposed")
     .option("--source <source>", "Source/provenance", "cli")
@@ -549,7 +569,7 @@ export function registerTextMailroomCli(program: Command) {
     .option("--confirm-send", "Confirm this command may call the sender")
     .action(
       async (opts: {
-        to: string;
+        to?: string;
         body: string;
         reason: string;
         source?: string;
@@ -570,11 +590,16 @@ export function registerTextMailroomCli(program: Command) {
         }
 
         const rootDir = resolveRoot(root);
+        const recipient = await resolveRequestSendRecipient({
+          rootDir,
+          to: opts.to,
+          contactId: opts.contactId,
+        });
         let item = await proposeTextMailroomOutbound(
           { rootDir },
           {
             kind: opts.kind ?? "manual",
-            recipient: requireOption(opts.to, "--to"),
+            recipient,
             body: requireOption(opts.body, "--body"),
             reason: requireOption(opts.reason, "--reason"),
             source: opts.source ?? "cli",

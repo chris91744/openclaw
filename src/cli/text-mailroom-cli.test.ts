@@ -236,6 +236,94 @@ describe("text-mailroom cli", () => {
     expect(output).not.toContain("Secret request-send body");
   });
 
+  it("request_send_can_queue_by_contact_id_without_echoing_the_raw_phone_or_body", async () => {
+    const root = await makeRoot();
+    const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
+
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "--json",
+      "contacts",
+      "upsert",
+      "--phone",
+      "+15551234567",
+      "--name",
+      "Handyman Lead",
+      "--labels",
+      "lead,vendor",
+    ]);
+    const contact = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as { contactId: string };
+    log.mockClear();
+
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "--json",
+      "request-send",
+      "--contact-id",
+      contact.contactId,
+      "--body",
+      "Secret contact-id body",
+      "--reason",
+      "operator contact shortcut smoke",
+    ]);
+    const queued = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as {
+      id: string;
+      contactId?: string;
+      stage: string;
+      status: string;
+    };
+    expect(queued.id).toMatch(/^outbound_/);
+    expect(queued.contactId).toBe(contact.contactId);
+    expect(queued.stage).toBe("queued");
+    expect(queued.status).toBe("queued");
+
+    await runCli(["text-mailroom", "--root", root, "list"]);
+    const output = log.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("operator contact shortcut smoke");
+    expect(output).not.toContain("+15551234567");
+    expect(output).not.toContain("Secret contact-id body");
+  });
+
+  it("request_send_rejects_conflicting_to_and_contact_id", async () => {
+    const root = await makeRoot();
+    const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
+
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "--json",
+      "contacts",
+      "upsert",
+      "--phone",
+      "+15551234567",
+      "--name",
+      "Handyman Lead",
+    ]);
+    const contact = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as { contactId: string };
+
+    await expect(
+      runCli([
+        "text-mailroom",
+        "--root",
+        root,
+        "request-send",
+        "--to",
+        "+15550000000",
+        "--contact-id",
+        contact.contactId,
+        "--body",
+        "hello",
+        "--reason",
+        "conflict smoke",
+      ]),
+    ).rejects.toThrow("either --to or --contact-id");
+  });
+
   it("request_send_refuses_send_without_confirm_before_queueing", async () => {
     const root = await makeRoot();
     const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});

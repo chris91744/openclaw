@@ -83,6 +83,15 @@ openclaw text-mailroom request-send \
   --reason "Chris requested handyman outreach"
 ```
 
+If the person is already saved as a Text Mailroom contact, use `--contact-id` instead of retyping the raw phone number:
+
+```bash
+openclaw text-mailroom request-send \
+  --contact-id contact_... \
+  --body "Hi, are you available for a small job?" \
+  --reason "Chris requested handyman outreach"
+```
+
 It can also approve in the same command without sending:
 
 ```bash
