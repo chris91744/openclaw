@@ -94,6 +94,8 @@ export const GroupChatSchema = z
   .object({
     mentionPatterns: z.array(z.string()).optional(),
     historyLimit: z.number().int().positive().optional(),
+    /** @deprecated Accepted for old local configs; no current runtime behavior depends on it. */
+    visibleReplies: z.union([z.string(), z.number(), z.boolean()]).optional(),
   })
   .strict()
   .optional();

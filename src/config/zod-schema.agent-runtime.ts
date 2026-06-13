@@ -430,6 +430,24 @@ export const MemorySearchSchema = z
   })
   .strict()
   .optional();
+
+export const AgentModelSettingsSchema = z
+  .object({
+    alias: z.string().optional(),
+    /** Provider-specific API parameters (e.g., GLM-4.7 thinking mode). */
+    params: z.record(z.string(), z.unknown()).optional(),
+    /** Enable streaming for this model (default: true, false for Ollama to avoid SDK issue #1205). */
+    streaming: z.boolean().optional(),
+    /** @deprecated Accepted for old local configs; current runtimes ignore this metadata. */
+    agentRuntime: z
+      .object({
+        id: z.string().optional(),
+      })
+      .passthrough()
+      .optional(),
+  })
+  .strict();
+
 export const AgentModelSchema = z.union([
   z.string(),
   z
@@ -447,6 +465,8 @@ export const AgentEntrySchema = z
     workspace: z.string().optional(),
     agentDir: z.string().optional(),
     model: AgentModelSchema.optional(),
+    /** @deprecated Accepted for old local configs; use agents.defaults.models plus model instead. */
+    models: z.record(z.string(), AgentModelSettingsSchema).optional(),
     skills: z.array(z.string()).optional(),
     memorySearch: MemorySearchSchema,
     humanDelay: HumanDelaySchema.optional(),

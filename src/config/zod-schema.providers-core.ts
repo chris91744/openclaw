@@ -114,6 +114,8 @@ export const TelegramAccountSchemaBase = z
     draftChunk: BlockStreamingChunkSchema.optional(),
     blockStreamingCoalesce: BlockStreamingCoalesceSchema.optional(),
     streamMode: z.enum(["off", "partial", "block"]).optional().default("partial"),
+    /** @deprecated Accepted for old local configs; use streamMode/draftChunk/blockStreaming instead. */
+    streaming: z.unknown().optional(),
     mediaMaxMb: z.number().positive().optional(),
     timeoutSeconds: z.number().int().positive().optional(),
     retry: RetryConfigSchema,
