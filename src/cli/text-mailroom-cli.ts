@@ -23,11 +23,13 @@ import {
   sendApprovedTextMailroomOutbound,
   upsertTextMailroomContact,
 } from "../../extensions/bluebubbles/src/text-mailroom-outbound.js";
+import { textMailroomPaths } from "../../extensions/bluebubbles/src/text-mailroom-store.js";
 import {
   TEXT_MAILROOM_SEND_OPTIN_ENV,
   type TextMailroomContactLabel,
   type TextMailroomThread,
   type TextMailroomOutboundKind,
+  type TextMailroomOutboundStatus,
   type TextMailroomRisk,
 } from "../../extensions/bluebubbles/src/text-mailroom-types.js";
 import { BLUEBUBBLES_OUTBOUND_ENABLED_ENV } from "../../extensions/bluebubbles/src/types.js";
@@ -98,6 +100,21 @@ export type TextMailroomReadinessStatus = {
       exportPrestigio: boolean;
       rootDirConfigured: boolean;
     };
+  };
+};
+
+export type TextMailroomOperationalHealth = {
+  rootDir: string;
+  storeExists: boolean;
+  counts: {
+    contacts: number;
+    campaigns: number;
+    inboxThreads: number;
+    inboxNeedsReply: number;
+    inboxHighPriority: number;
+    outboundTotal: number;
+    outboundByStatus: Record<TextMailroomOutboundStatus, number>;
+    outboundClaims: number;
   };
 };
 
@@ -287,6 +304,83 @@ export function formatTextMailroomReadinessStatus(status: TextMailroomReadinessS
     `Text Mailroom ingest: includeGroups=${blue.textMailroom.includeGroups ? "yes" : "no"} autoClassify=${blue.textMailroom.autoClassify ? "yes" : "no"} exportPrestigio=${blue.textMailroom.exportPrestigio ? "yes" : "no"}`,
     `Send gates: textMailroom=${gate(status.sendGates.textMailroomApprovedSendOptIn)} blueBubblesTransport=${gate(status.sendGates.blueBubblesTransportOptIn)} legacyIMessage=${gate(status.sendGates.legacyImessageSendOptIn)}`,
   ].join("\n");
+}
+
+export async function buildTextMailroomOperationalHealth(params: {
+  rootDir: string;
+}): Promise<TextMailroomOperationalHealth> {
+  const rootDir = path.resolve(params.rootDir);
+  const [storeExists, contacts, campaigns, inbox, outbound, outboundClaims] = await Promise.all([
+    pathExists(rootDir),
+    listTextMailroomContacts({ rootDir }),
+    listTextMailroomCampaigns({ rootDir }),
+    buildTextMailroomDigest({ rootDir }),
+    listTextMailroomOutboundItems({ rootDir }),
+    countJsonFiles(textMailroomPaths(rootDir).outboundClaims),
+  ]);
+  const outboundByStatus = emptyOutboundStatusCounts();
+  for (const item of outbound) {
+    outboundByStatus[item.status] += 1;
+  }
+  return {
+    rootDir,
+    storeExists,
+    counts: {
+      contacts: contacts.length,
+      campaigns: campaigns.length,
+      inboxThreads: inbox.length,
+      inboxNeedsReply: inbox.filter((thread) => thread.needsReply).length,
+      inboxHighPriority: inbox.filter((thread) => thread.priority === "high").length,
+      outboundTotal: outbound.length,
+      outboundByStatus,
+      outboundClaims,
+    },
+  };
+}
+
+function formatTextMailroomOperationalHealth(health: TextMailroomOperationalHealth): string {
+  const counts = health.counts;
+  const status = counts.outboundByStatus;
+  return [
+    `Text Mailroom store: ${health.storeExists ? "present" : "missing"}`,
+    `Directory: contacts=${counts.contacts} campaigns=${counts.campaigns}`,
+    `Inbox: threads=${counts.inboxThreads} needsReply=${counts.inboxNeedsReply} high=${counts.inboxHighPriority}`,
+    `Outbound: total=${counts.outboundTotal} queued=${status.queued} approved=${status.approved} sending=${status.sending} sent=${status.sent} failed=${status.failed} rejected=${status.rejected} claims=${counts.outboundClaims}`,
+  ].join("\n");
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.stat(filePath);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+}
+
+async function countJsonFiles(dir: string): Promise<number> {
+  try {
+    return (await fs.readdir(dir)).filter((entry) => entry.endsWith(".json")).length;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return 0;
+    }
+    throw error;
+  }
+}
+
+function emptyOutboundStatusCounts(): Record<TextMailroomOutboundStatus, number> {
+  return {
+    approved: 0,
+    failed: 0,
+    queued: 0,
+    rejected: 0,
+    sending: 0,
+    sent: 0,
+  };
 }
 
 function requireOption(value: string | undefined, name: string): string {
@@ -551,6 +645,14 @@ export function registerTextMailroomCli(program: Command) {
         config: loadConfig(),
       });
       output(root, status, formatTextMailroomReadinessStatus(status));
+    });
+
+  root
+    .command("health")
+    .description("Show redacted Text Mailroom queue health")
+    .action(async () => {
+      const health = await buildTextMailroomOperationalHealth({ rootDir: resolveRoot(root) });
+      output(root, health, formatTextMailroomOperationalHealth(health));
     });
 
   root

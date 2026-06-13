@@ -51,6 +51,7 @@ This packet documents the branch that moves Text Mailroom from a safe queue foun
    - New CLI: `openclaw text-mailroom status`.
    - Reports whether BlueBubbles and Text Mailroom ingestion are configured without printing server URLs, passwords, raw phone numbers, or message bodies.
    - Reports the three outbound send gates so operators can verify that real sends remain disabled.
+   - New CLI: `openclaw text-mailroom health` reports redacted queue counts, inbox counts, outbound status counts, and claim-lock counts.
 
 5. Safer operator lookup helpers
    - `openclaw text-mailroom contacts list` lists contact ids, labels, and names without raw phone numbers.
@@ -82,6 +83,7 @@ This packet documents the branch that moves Text Mailroom from a safe queue foun
 - High-risk approval is enforced in the shared approval layer, so CLI and future callers must explicitly confirm high-risk drafts before approval.
 - Idempotency is enforced in the shared proposal layer: same `requestId` plus same payload returns the existing item, while same `requestId` plus different recipient/body/kind fails closed.
 - `text-mailroom status` redacts BlueBubbles server URLs, passwords, raw phone numbers, and message bodies.
+- `text-mailroom health` reports counts only and avoids raw phone numbers and message bodies.
 - `enable-bluebubbles-ingest` dry-runs by default and its summary redacts BlueBubbles server URLs, passwords, and allowlisted recipients.
 - Campaign sends are still bounded by allowed recipient hashes, expiry, max sends, and campaign send locks.
 - List/search commands avoid raw phone numbers and message bodies.
@@ -99,7 +101,7 @@ Focused:
   extensions/bluebubbles/src/text-mailroom-outbound.test.ts
 ```
 
-Latest result: 4 files / 102 tests passed.
+Latest result: 4 files / 103 tests passed.
 
 Broader:
 
@@ -112,7 +114,7 @@ Broader:
   src/config/config.plugin-validation.test.ts
 ```
 
-Latest result: 17 files / 343 tests passed.
+Latest result: 17 files / 344 tests passed.
 
 Format:
 

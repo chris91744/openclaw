@@ -35,6 +35,14 @@ openclaw text-mailroom --json status
 
 The status output reports the store root, whether `channels.bluebubbles` is present/configured, whether `channels.bluebubbles.textMailroom.enabled` is on, allowlist counts, group policy, and the three outbound send gates.
 
+Check local queue health without raw phone numbers or message bodies:
+
+```bash
+openclaw text-mailroom health
+```
+
+The health output reports contacts, campaigns, inbox thread counts, outbound status counts, and send claim locks.
+
 ## Enable BlueBubbles Ingest
 
 Plan the live BlueBubbles -> Text Mailroom config change without writing it:

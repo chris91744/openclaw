@@ -10,6 +10,7 @@ import {
 import { defaultRuntime } from "../runtime.js";
 import {
   buildBlueBubblesTextMailroomConfig,
+  buildTextMailroomOperationalHealth,
   buildTextMailroomReadinessStatus,
   formatTextMailroomReadinessStatus,
   registerTextMailroomCli,
@@ -157,6 +158,72 @@ describe("text-mailroom cli", () => {
     expect(human).not.toContain("secret-bluebubbles");
     expect(human).not.toContain("super-secret-password");
     expect(human).not.toContain("+15551234567");
+  });
+
+  it("reports_operational_health_counts_without_raw_recipients_or_bodies", async () => {
+    const root = await makeRoot();
+    const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
+
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "contacts",
+      "upsert",
+      "--phone",
+      "+15551234567",
+      "--name",
+      "Health Smoke Contact",
+      "--labels",
+      "vendor",
+    ]);
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "inbox",
+      "record",
+      "--from",
+      "+15551234567",
+      "--body",
+      "Can you send a quote today?",
+      "--thread-id",
+      "health-thread",
+    ]);
+    await runCli(["text-mailroom", "--root", root, "inbox", "classify", "health-thread"]);
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "request-send",
+      "--contact",
+      "Health Smoke Contact",
+      "--body",
+      "Secret health smoke body",
+      "--reason",
+      "health smoke",
+    ]);
+    log.mockClear();
+
+    await runCli(["text-mailroom", "--root", root, "--json", "health"]);
+    const health = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as Awaited<
+      ReturnType<typeof buildTextMailroomOperationalHealth>
+    >;
+    expect(health.storeExists).toBe(true);
+    expect(health.counts.contacts).toBe(1);
+    expect(health.counts.inboxThreads).toBe(1);
+    expect(health.counts.inboxNeedsReply).toBe(1);
+    expect(health.counts.outboundTotal).toBe(1);
+    expect(health.counts.outboundByStatus.queued).toBe(1);
+
+    log.mockClear();
+    await runCli(["text-mailroom", "--root", root, "health"]);
+    const output = log.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("Directory: contacts=1 campaigns=0");
+    expect(output).toContain("Inbox: threads=1 needsReply=1");
+    expect(output).toContain("Outbound: total=1 queued=1");
+    expect(output).not.toContain("+15551234567");
+    expect(output).not.toContain("Secret health smoke body");
   });
 
   it("queues_and_lists_outbound_items_without_body_or_phone_in_list_output", async () => {
