@@ -4,7 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { defaultRuntime } from "../runtime.js";
-import { registerTextMailroomCli } from "./text-mailroom-cli.js";
+import {
+  buildTextMailroomReadinessStatus,
+  formatTextMailroomReadinessStatus,
+  registerTextMailroomCli,
+} from "./text-mailroom-cli.js";
 
 const roots: string[] = [];
 
@@ -28,6 +32,65 @@ afterEach(async () => {
 });
 
 describe("text-mailroom cli", () => {
+  it("builds_a_redacted_readiness_status_without_config_secrets_or_recipients", () => {
+    const status = buildTextMailroomReadinessStatus({
+      rootDir: "/tmp/text-mailroom",
+      env: {
+        OPENCLAW_TEXT_MAILROOM_SEND_OPTIN: "1",
+        OPENCLAW_BLUEBUBBLES_OUTBOUND_ENABLED: "0",
+        OPENCLAW_IMESSAGE_SEND_OPTIN: "1",
+      },
+      config: {
+        channels: {
+          bluebubbles: {
+            enabled: true,
+            serverUrl: "http://secret-bluebubbles.local:1234",
+            password: "super-secret-password",
+            dmPolicy: "allowlist",
+            allowFrom: ["+15551234567"],
+            groupPolicy: "disabled",
+            textMailroom: {
+              enabled: true,
+              includeGroups: false,
+              autoClassify: true,
+              exportPrestigio: false,
+            },
+          },
+        },
+      } as never,
+    });
+
+    expect(status.bluebubbles).toMatchObject({
+      channelPresent: true,
+      enabled: true,
+      configured: true,
+      serverUrlConfigured: true,
+      passwordConfigured: true,
+      allowFromCount: 1,
+      groupPolicy: "disabled",
+      textMailroom: {
+        enabled: true,
+        includeGroups: false,
+        autoClassify: true,
+        exportPrestigio: false,
+      },
+    });
+    expect(status.sendGates).toEqual({
+      textMailroomApprovedSendOptIn: true,
+      blueBubblesTransportOptIn: false,
+      legacyImessageSendOptIn: true,
+    });
+
+    const serialized = JSON.stringify(status);
+    const human = formatTextMailroomReadinessStatus(status);
+    expect(serialized).not.toContain("secret-bluebubbles");
+    expect(serialized).not.toContain("super-secret-password");
+    expect(serialized).not.toContain("+15551234567");
+    expect(human).not.toContain("secret-bluebubbles");
+    expect(human).not.toContain("super-secret-password");
+    expect(human).not.toContain("+15551234567");
+  });
+
   it("queues_and_lists_outbound_items_without_body_or_phone_in_list_output", async () => {
     const root = await makeRoot();
     const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});

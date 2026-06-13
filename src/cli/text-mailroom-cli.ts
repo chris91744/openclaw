@@ -1,10 +1,5 @@
 import type { Command } from "commander";
 import path from "node:path";
-import type {
-  TextMailroomContactLabel,
-  TextMailroomOutboundKind,
-  TextMailroomRisk,
-} from "../../extensions/bluebubbles/src/text-mailroom-types.js";
 import {
   buildTextMailroomDigest,
   classifyTextMailroomThread,
@@ -26,12 +21,49 @@ import {
   sendApprovedTextMailroomOutbound,
   upsertTextMailroomContact,
 } from "../../extensions/bluebubbles/src/text-mailroom-outbound.js";
+import {
+  TEXT_MAILROOM_SEND_OPTIN_ENV,
+  type TextMailroomContactLabel,
+  type TextMailroomOutboundKind,
+  type TextMailroomRisk,
+} from "../../extensions/bluebubbles/src/text-mailroom-types.js";
+import { BLUEBUBBLES_OUTBOUND_ENABLED_ENV } from "../../extensions/bluebubbles/src/types.js";
+import { loadConfig, type OpenClawConfig } from "../config/config.js";
 import { resolveStateDir } from "../config/paths.js";
 import { defaultRuntime } from "../runtime.js";
+
+const LEGACY_IMESSAGE_SEND_OPTIN_ENV = "OPENCLAW_IMESSAGE_SEND_OPTIN";
 
 type TextMailroomCliOptions = {
   root?: string;
   json?: boolean;
+};
+
+export type TextMailroomReadinessStatus = {
+  rootDir: string;
+  sendGates: {
+    textMailroomApprovedSendOptIn: boolean;
+    blueBubblesTransportOptIn: boolean;
+    legacyImessageSendOptIn: boolean;
+  };
+  bluebubbles: {
+    channelPresent: boolean;
+    enabled: boolean;
+    configured: boolean;
+    serverUrlConfigured: boolean;
+    passwordConfigured: boolean;
+    dmPolicy?: string;
+    allowFromCount: number;
+    groupPolicy?: string;
+    accountCount: number;
+    textMailroom: {
+      enabled: boolean;
+      includeGroups: boolean;
+      autoClassify: boolean;
+      exportPrestigio: boolean;
+      rootDirConfigured: boolean;
+    };
+  };
 };
 
 function resolveRoot(command: Command): string {
@@ -50,6 +82,77 @@ function output(command: Command, value: unknown, human?: string): void {
     return;
   }
   defaultRuntime.log(human ?? JSON.stringify(value, null, 2));
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function stringConfigured(value: unknown): boolean {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function booleanValue(value: unknown, fallback = false): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function countArray(value: unknown): number {
+  return Array.isArray(value) ? value.length : 0;
+}
+
+export function buildTextMailroomReadinessStatus(params: {
+  rootDir: string;
+  config: OpenClawConfig;
+  env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
+}): TextMailroomReadinessStatus {
+  const env = params.env ?? process.env;
+  const channels = asRecord(params.config.channels);
+  const bluebubbles = asRecord(channels?.bluebubbles);
+  const accounts = asRecord(bluebubbles?.accounts);
+  const textMailroom = asRecord(bluebubbles?.textMailroom);
+  const serverUrlConfigured = stringConfigured(bluebubbles?.serverUrl);
+  const passwordConfigured = stringConfigured(bluebubbles?.password);
+  return {
+    rootDir: params.rootDir,
+    sendGates: {
+      textMailroomApprovedSendOptIn: env[TEXT_MAILROOM_SEND_OPTIN_ENV] === "1",
+      blueBubblesTransportOptIn: env[BLUEBUBBLES_OUTBOUND_ENABLED_ENV] === "1",
+      legacyImessageSendOptIn: env[LEGACY_IMESSAGE_SEND_OPTIN_ENV] === "1",
+    },
+    bluebubbles: {
+      channelPresent: Boolean(bluebubbles),
+      enabled: booleanValue(bluebubbles?.enabled),
+      configured: serverUrlConfigured && passwordConfigured,
+      serverUrlConfigured,
+      passwordConfigured,
+      dmPolicy: typeof bluebubbles?.dmPolicy === "string" ? bluebubbles.dmPolicy : undefined,
+      allowFromCount: countArray(bluebubbles?.allowFrom),
+      groupPolicy:
+        typeof bluebubbles?.groupPolicy === "string" ? bluebubbles.groupPolicy : undefined,
+      accountCount: accounts ? Object.keys(accounts).length : 0,
+      textMailroom: {
+        enabled: booleanValue(textMailroom?.enabled),
+        includeGroups: booleanValue(textMailroom?.includeGroups),
+        autoClassify: textMailroom?.autoClassify === false ? false : true,
+        exportPrestigio: booleanValue(textMailroom?.exportPrestigio),
+        rootDirConfigured: stringConfigured(textMailroom?.rootDir),
+      },
+    },
+  };
+}
+
+export function formatTextMailroomReadinessStatus(status: TextMailroomReadinessStatus): string {
+  const gate = (enabled: boolean) => (enabled ? "enabled" : "disabled");
+  const blue = status.bluebubbles;
+  return [
+    `Text Mailroom root: ${status.rootDir}`,
+    `BlueBubbles: channel=${blue.channelPresent ? "present" : "missing"} enabled=${blue.enabled ? "yes" : "no"} configured=${blue.configured ? "yes" : "no"} textMailroom=${blue.textMailroom.enabled ? "enabled" : "disabled"}`,
+    `BlueBubbles policy: dm=${blue.dmPolicy ?? "unset"} allowFrom=${blue.allowFromCount} group=${blue.groupPolicy ?? "unset"} accounts=${blue.accountCount}`,
+    `Text Mailroom ingest: includeGroups=${blue.textMailroom.includeGroups ? "yes" : "no"} autoClassify=${blue.textMailroom.autoClassify ? "yes" : "no"} exportPrestigio=${blue.textMailroom.exportPrestigio ? "yes" : "no"}`,
+    `Send gates: textMailroom=${gate(status.sendGates.textMailroomApprovedSendOptIn)} blueBubblesTransport=${gate(status.sendGates.blueBubblesTransportOptIn)} legacyIMessage=${gate(status.sendGates.legacyImessageSendOptIn)}`,
+  ].join("\n");
 }
 
 function requireOption(value: string | undefined, name: string): string {
@@ -130,6 +233,17 @@ export function registerTextMailroomCli(program: Command) {
     .description("Supervised SMS/iMessage mailroom queue")
     .option("--root <dir>", "Text Mailroom store directory")
     .option("--json", "Print JSON output");
+
+  root
+    .command("status")
+    .description("Show redacted Text Mailroom readiness and send gate status")
+    .action(async () => {
+      const status = buildTextMailroomReadinessStatus({
+        rootDir: resolveRoot(root),
+        config: loadConfig(),
+      });
+      output(root, status, formatTextMailroomReadinessStatus(status));
+    });
 
   root
     .command("list")

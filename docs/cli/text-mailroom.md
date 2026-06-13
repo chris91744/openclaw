@@ -19,6 +19,22 @@ OPENCLAW_TEXT_MAILROOM_DIR=/path/to/store openclaw text-mailroom ...
 
 The store uses private directories (`0700`) and private JSON/NDJSON files (`0600`).
 
+## Status
+
+Check Text Mailroom readiness without printing BlueBubbles passwords, server URLs, raw phone numbers, or message bodies:
+
+```bash
+openclaw text-mailroom status
+```
+
+Use JSON for verifiers:
+
+```bash
+openclaw text-mailroom --json status
+```
+
+The status output reports the store root, whether `channels.bluebubbles` is present/configured, whether `channels.bluebubbles.textMailroom.enabled` is on, allowlist counts, group policy, and the three outbound send gates.
+
 ## Queue And Approval
 
 Queue a proposed text without sending:
