@@ -526,7 +526,10 @@ export function registerTextMailroomCli(program: Command) {
         items.map(summarizeItem),
         items.length
           ? items
-              .map((item) => `${item.status.padEnd(8)} ${item.id} ${item.kind} ${item.reason}`)
+              .map(
+                (item) =>
+                  `${item.status.padEnd(8)} ${item.id} ${item.kind} risk=${item.risk} ${item.reason}`,
+              )
               .join("\n")
           : "No outbound queue items.",
       );
@@ -556,7 +559,7 @@ export function registerTextMailroomCli(program: Command) {
       "manual, campaign_outreach, conversation_reply, or follow_up",
       "manual",
     )
-    .option("--risk <risk>", "low, medium, or high", "medium")
+    .option("--risk <risk>", "low, medium, or high; inferred when omitted")
     .option("--campaign-id <id>", "Campaign id")
     .option("--contact-id <id>", "Contact id")
     .option("--thread-id <id>", "Thread id")
@@ -580,7 +583,7 @@ export function registerTextMailroomCli(program: Command) {
             body: requireOption(opts.body, "--body"),
             reason: requireOption(opts.reason, "--reason"),
             source: opts.source ?? "cli",
-            risk: opts.risk ?? "medium",
+            risk: opts.risk,
             campaignId: opts.campaignId,
             contactId: opts.contactId,
             threadId: opts.threadId,
@@ -602,7 +605,7 @@ export function registerTextMailroomCli(program: Command) {
       "manual, campaign_outreach, conversation_reply, or follow_up",
       "manual",
     )
-    .option("--risk <risk>", "low, medium, or high", "medium")
+    .option("--risk <risk>", "low, medium, or high; inferred when omitted")
     .option("--campaign-id <id>", "Campaign id")
     .option("--contact-id <id>", "Contact id")
     .option("--contact <query>", "Saved contact id, exact name, label, or unique name fragment")
@@ -648,7 +651,7 @@ export function registerTextMailroomCli(program: Command) {
             body: requireOption(opts.body, "--body"),
             reason: requireOption(opts.reason, "--reason"),
             source: opts.source ?? "cli",
-            risk: opts.risk ?? "medium",
+            risk: opts.risk,
             campaignId: opts.campaignId,
             contactId: resolvedRecipient.contactId ?? opts.contactId,
             threadId: opts.threadId,

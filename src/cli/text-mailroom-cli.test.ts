@@ -227,10 +227,12 @@ describe("text-mailroom cli", () => {
       id: string;
       stage: string;
       status: string;
+      risk: string;
     };
     expect(queued.id).toMatch(/^outbound_/);
     expect(queued.stage).toBe("queued");
     expect(queued.status).toBe("queued");
+    expect(queued.risk).toBe("high");
     const output = log.mock.calls.map((call) => String(call[0])).join("\n");
     expect(output).not.toContain("+15551234567");
     expect(output).not.toContain("Secret request-send body");
@@ -275,15 +277,18 @@ describe("text-mailroom cli", () => {
       contactId?: string;
       stage: string;
       status: string;
+      risk: string;
     };
     expect(queued.id).toMatch(/^outbound_/);
     expect(queued.contactId).toBe(contact.contactId);
     expect(queued.stage).toBe("queued");
     expect(queued.status).toBe("queued");
+    expect(queued.risk).toBe("medium");
 
     await runCli(["text-mailroom", "--root", root, "list"]);
     const output = log.mock.calls.map((call) => String(call[0])).join("\n");
     expect(output).toContain("operator contact shortcut smoke");
+    expect(output).toContain("risk=medium");
     expect(output).not.toContain("+15551234567");
     expect(output).not.toContain("Secret contact-id body");
   });
@@ -327,15 +332,18 @@ describe("text-mailroom cli", () => {
       contactId?: string;
       stage: string;
       status: string;
+      risk: string;
     };
     expect(queued.id).toMatch(/^outbound_/);
     expect(queued.contactId).toBe(contact.contactId);
     expect(queued.stage).toBe("queued");
     expect(queued.status).toBe("queued");
+    expect(queued.risk).toBe("medium");
 
     await runCli(["text-mailroom", "--root", root, "list"]);
     const output = log.mock.calls.map((call) => String(call[0])).join("\n");
     expect(output).toContain("operator natural contact smoke");
+    expect(output).toContain("risk=medium");
     expect(output).not.toContain("+15551234567");
     expect(output).not.toContain("Secret contact-name body");
   });

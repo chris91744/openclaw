@@ -193,7 +193,7 @@ export async function proposeTextMailroomOutbound(
     threadId: input.threadId?.trim() || undefined,
     reason: input.reason.trim(),
     source: input.source.trim() || "agent",
-    risk: input.risk ?? "medium",
+    risk: inferOutboundRisk(input, contact),
     requestedBy: input.requestedBy?.trim() || undefined,
     createdAt: now,
     updatedAt: now,
@@ -580,6 +580,32 @@ function normalizeLabels(labels: TextMailroomContactLabel[]): TextMailroomContac
   return Array.from(
     new Set<TextMailroomContactLabel>(labels.length > 0 ? labels : ["unknown"]),
   ).sort();
+}
+
+function inferOutboundRisk(
+  input: ProposalInput,
+  contact: TextMailroomContact | null | undefined,
+): TextMailroomRisk {
+  if (input.risk) {
+    return input.risk;
+  }
+  if (input.kind === "campaign_outreach" || input.kind === "follow_up") {
+    return "high";
+  }
+  if (!contact || contact.labels.includes("unknown")) {
+    return "high";
+  }
+  if (contact.labels.includes("lead") || contact.labels.includes("personal")) {
+    return "medium";
+  }
+  if (
+    contact.labels.includes("client") ||
+    contact.labels.includes("known") ||
+    contact.labels.includes("vendor")
+  ) {
+    return "low";
+  }
+  return "medium";
 }
 
 function contactPath(rootDir: string, contactId: string): string {

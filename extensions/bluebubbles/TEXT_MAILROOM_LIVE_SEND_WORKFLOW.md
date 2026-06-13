@@ -27,6 +27,7 @@ This packet documents the branch that moves Text Mailroom from a safe queue foun
    - Supports `--contact <query>` for a saved contact id, exact name, exact label, or unique name fragment.
    - `--to`, `--contact-id`, and `--contact` are mutually exclusive to avoid recipient/contact mismatch.
    - Ambiguous contact lookups fail closed and require `--contact-id`.
+   - Risk is inferred when `--risk` is omitted: raw/unknown recipients are high risk, leads/personal contacts are medium risk, known/vendor/client contacts are low risk, and campaign/follow-up sends are high risk.
    - `--approve-by Chris` approves without sending.
    - `--send` requires `--confirm-send` before any send attempt.
    - The underlying sender still requires `OPENCLAW_TEXT_MAILROOM_SEND_OPTIN=1`.
@@ -59,6 +60,7 @@ This packet documents the branch that moves Text Mailroom from a safe queue foun
 - The BlueBubbles transport remains separately env-gated.
 - `request-send --contact-id` and `request-send --contact` resolve stored contacts internally and keep list/request summaries redacted.
 - Ambiguous `request-send --contact` lookups refuse before queueing.
+- Omitted risk is inferred in the queue layer, not just the CLI, and explicit `--risk` still overrides inference.
 - `text-mailroom status` redacts BlueBubbles server URLs, passwords, raw phone numbers, and message bodies.
 - `enable-bluebubbles-ingest` dry-runs by default and its summary redacts BlueBubbles server URLs, passwords, and allowlisted recipients.
 - Campaign sends are still bounded by allowed recipient hashes, expiry, max sends, and campaign send locks.
@@ -76,7 +78,7 @@ Focused:
   extensions/bluebubbles/src/text-mailroom-outbound.test.ts
 ```
 
-Latest result: 4 files / 87 tests passed.
+Latest result: 4 files / 88 tests passed.
 
 Broader:
 
@@ -89,7 +91,7 @@ Broader:
   src/config/config.plugin-validation.test.ts
 ```
 
-Latest result: 17 files / 328 tests passed.
+Latest result: 17 files / 329 tests passed.
 
 Format:
 

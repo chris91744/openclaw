@@ -105,6 +105,68 @@ describe("Text Mailroom outbound approvals", () => {
     ).rejects.toThrow("blocked contacts");
   });
 
+  it("infers_risk_from_contact_labels_and_message_kind", async () => {
+    const rootDir = await makeRoot();
+    await upsertTextMailroomContact(
+      { rootDir },
+      { phone: "+15551234567", labels: ["vendor"], source: "manual" },
+    );
+    await upsertTextMailroomContact(
+      { rootDir },
+      { phone: "+15557654321", labels: ["lead"], source: "manual" },
+    );
+
+    await expect(
+      proposeTextMailroomOutbound(
+        { rootDir },
+        {
+          kind: "manual",
+          recipient: "+15550000000",
+          body: "raw number",
+          reason: "unknown recipient",
+          source: "agent",
+        },
+      ),
+    ).resolves.toMatchObject({ risk: "high" });
+    await expect(
+      proposeTextMailroomOutbound(
+        { rootDir },
+        {
+          kind: "manual",
+          recipient: "+15551234567",
+          body: "known vendor",
+          reason: "known vendor recipient",
+          source: "agent",
+        },
+      ),
+    ).resolves.toMatchObject({ risk: "low" });
+    await expect(
+      proposeTextMailroomOutbound(
+        { rootDir },
+        {
+          kind: "manual",
+          recipient: "+15557654321",
+          body: "lead",
+          reason: "lead recipient",
+          source: "agent",
+        },
+      ),
+    ).resolves.toMatchObject({ risk: "medium" });
+    await expect(
+      proposeTextMailroomOutbound(
+        { rootDir },
+        {
+          kind: "manual",
+          recipient: "+15550000000",
+          body: "override",
+          reason: "explicit risk",
+          source: "agent",
+          risk: "low",
+        },
+      ),
+    ).resolves.toMatchObject({ risk: "low" });
+  });
+
   it("requires_approval_and_two_opt_in_flags_before_sender_can_run", async () => {
     const rootDir = await makeRoot();
     const sender = vi.fn(async () => ({ messageId: "msg-1" }));
