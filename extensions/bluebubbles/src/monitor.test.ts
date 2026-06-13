@@ -945,25 +945,26 @@ describe("BlueBubbles webhook monitor", () => {
       expect(mockDispatchReplyWithBufferedBlockDispatcher).not.toHaveBeenCalled();
 
       const threadsDir = path.join(mockStateDir, "workspace", "text-mailroom", "inbox", "threads");
-      let entries: string[] = [];
+      let thread:
+        | {
+            accountId: string;
+            sender: string;
+            tags: string[];
+            needsReply: boolean;
+            summary: string;
+          }
+        | undefined;
       await vi.waitFor(async () => {
-        entries = await fs.readdir(threadsDir);
+        const entries = await fs.readdir(threadsDir);
         expect(entries).toHaveLength(1);
+        const threadRaw = await fs.readFile(path.join(threadsDir, entries[0] ?? ""), "utf8");
+        thread = JSON.parse(threadRaw) as typeof thread;
+        expect(thread?.tags).toEqual(expect.arrayContaining(["prestigio", "urgent"]));
+        expect(thread?.needsReply).toBe(true);
       });
-      expect(entries).toHaveLength(1);
-      const threadRaw = await fs.readFile(path.join(threadsDir, entries[0] ?? ""), "utf8");
-      const thread = JSON.parse(threadRaw) as {
-        accountId: string;
-        sender: string;
-        tags: string[];
-        needsReply: boolean;
-        summary: string;
-      };
-      expect(thread.accountId).toBe("default");
-      expect(thread.sender).toBe("+15551234567");
-      expect(thread.tags).toEqual(expect.arrayContaining(["prestigio", "urgent"]));
-      expect(thread.needsReply).toBe(true);
-      expect(thread.summary).toBe("Can you send a Prestigio quote today?");
+      expect(thread?.accountId).toBe("default");
+      expect(thread?.sender).toBe("+15551234567");
+      expect(thread?.summary).toBe("Can you send a Prestigio quote today?");
 
       const audit = await fs.readFile(
         path.join(mockStateDir, "workspace", "text-mailroom", "audit", "events.ndjson"),
