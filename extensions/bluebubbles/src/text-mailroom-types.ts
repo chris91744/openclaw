@@ -76,6 +76,7 @@ export type TextMailroomOutboundItem = {
   campaignId?: string;
   contactId?: string;
   threadId?: string;
+  requestId?: string;
   reason: string;
   source: string;
   risk: TextMailroomRisk;

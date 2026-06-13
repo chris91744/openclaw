@@ -388,6 +388,7 @@ function summarizeItem(item: Awaited<ReturnType<typeof listTextMailroomOutboundI
     campaignId: item.campaignId,
     contactId: item.contactId,
     threadId: item.threadId,
+    requestId: item.requestId,
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
     reason: item.reason,
@@ -565,6 +566,7 @@ export function registerTextMailroomCli(program: Command) {
     .option("--campaign-id <id>", "Campaign id")
     .option("--contact-id <id>", "Contact id")
     .option("--thread-id <id>", "Thread id")
+    .option("--request-id <id>", "Idempotency key for safe retries")
     .action(
       async (opts: {
         to: string;
@@ -576,6 +578,7 @@ export function registerTextMailroomCli(program: Command) {
         campaignId?: string;
         contactId?: string;
         threadId?: string;
+        requestId?: string;
       }) => {
         const item = await proposeTextMailroomOutbound(
           { rootDir: resolveRoot(root) },
@@ -589,6 +592,7 @@ export function registerTextMailroomCli(program: Command) {
             campaignId: opts.campaignId,
             contactId: opts.contactId,
             threadId: opts.threadId,
+            requestId: opts.requestId,
           },
         );
         output(root, summarizeItem(item), `Queued ${item.id}`);
@@ -612,6 +616,7 @@ export function registerTextMailroomCli(program: Command) {
     .option("--contact-id <id>", "Contact id")
     .option("--contact <query>", "Saved contact id, exact name, label, or unique name fragment")
     .option("--thread-id <id>", "Thread id")
+    .option("--request-id <id>", "Idempotency key for safe retries")
     .option("--approve-by <name>", "Approver name; approval still does not send")
     .option("--confirm-high-risk", "Required to approve high-risk drafts", false)
     .option("--send", "Attempt sending after approval")
@@ -628,6 +633,7 @@ export function registerTextMailroomCli(program: Command) {
         contactId?: string;
         contact?: string;
         threadId?: string;
+        requestId?: string;
         approveBy?: string;
         confirmHighRisk?: boolean;
         send?: boolean;
@@ -659,10 +665,11 @@ export function registerTextMailroomCli(program: Command) {
             campaignId: opts.campaignId,
             contactId: resolvedRecipient.contactId ?? opts.contactId,
             threadId: opts.threadId,
+            requestId: opts.requestId,
           },
         );
-        let stage: "queued" | "approved" | "sent" = "queued";
-        if (opts.approveBy?.trim()) {
+        let stage = item.status;
+        if (opts.approveBy?.trim() && item.status === "queued") {
           item = await approveTextMailroomOutbound(
             { rootDir },
             {
@@ -689,6 +696,7 @@ export function registerTextMailroomCli(program: Command) {
     .requiredOption("--reason <reason>", "Why this reply is proposed")
     .option("--source <source>", "Source/provenance", "cli")
     .option("--risk <risk>", "low, medium, or high; inferred when omitted")
+    .option("--request-id <id>", "Idempotency key for safe retries")
     .option("--approve-by <name>", "Approver name; approval still does not send")
     .option("--confirm-high-risk", "Required to approve high-risk drafts", false)
     .option("--send", "Attempt sending after approval")
@@ -701,6 +709,7 @@ export function registerTextMailroomCli(program: Command) {
           reason: string;
           source?: string;
           risk?: TextMailroomRisk;
+          requestId?: string;
           approveBy?: string;
           confirmHighRisk?: boolean;
           send?: boolean;
@@ -730,10 +739,11 @@ export function registerTextMailroomCli(program: Command) {
             risk: opts.risk,
             contactId: thread.contactId,
             threadId: thread.threadId,
+            requestId: opts.requestId,
           },
         );
-        let stage: "queued" | "approved" | "sent" = "queued";
-        if (opts.approveBy?.trim()) {
+        let stage = item.status;
+        if (opts.approveBy?.trim() && item.status === "queued") {
           item = await approveTextMailroomOutbound(
             { rootDir },
             {

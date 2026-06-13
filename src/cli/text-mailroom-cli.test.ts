@@ -247,6 +247,63 @@ describe("text-mailroom cli", () => {
     expect(output).not.toContain("Secret request-send body");
   });
 
+  it("request_send_dedupes_retries_by_request_id", async () => {
+    const root = await makeRoot();
+    const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await runCli([
+        "text-mailroom",
+        "--root",
+        root,
+        "--json",
+        "request-send",
+        "--to",
+        "+15551234567",
+        "--body",
+        "Secret retry body",
+        "--reason",
+        "operator retry smoke",
+        "--request-id",
+        "operator-request-1",
+      ]);
+    }
+    const first = JSON.parse(String(log.mock.calls.at(-2)?.[0])) as {
+      id: string;
+      requestId?: string;
+    };
+    const second = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as {
+      id: string;
+      requestId?: string;
+    };
+    expect(second.id).toBe(first.id);
+    expect(second.requestId).toBe("operator-request-1");
+
+    log.mockClear();
+    await runCli(["text-mailroom", "--root", root, "list"]);
+    const output = log.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output.match(/operator retry smoke/g)).toHaveLength(1);
+    expect(output).not.toContain("+15551234567");
+    expect(output).not.toContain("Secret retry body");
+
+    await expect(
+      runCli([
+        "text-mailroom",
+        "--root",
+        root,
+        "request-send",
+        "--to",
+        "+15551234567",
+        "--body",
+        "Different retry body",
+        "--reason",
+        "operator retry collision",
+        "--request-id",
+        "operator-request-1",
+      ]),
+    ).rejects.toThrow("request_id already exists with different outbound payload");
+  });
+
   it("request_send_can_queue_by_contact_id_without_echoing_the_raw_phone_or_body", async () => {
     const root = await makeRoot();
     const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});

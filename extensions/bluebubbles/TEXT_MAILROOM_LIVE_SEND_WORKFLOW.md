@@ -27,6 +27,7 @@ This packet documents the branch that moves Text Mailroom from a safe queue foun
    - Supports `--contact <query>` for a saved contact id, exact name, exact label, or unique name fragment.
    - `--to`, `--contact-id`, and `--contact` are mutually exclusive to avoid recipient/contact mismatch.
    - Ambiguous contact lookups fail closed and require `--contact-id`.
+   - Supports `--request-id <id>` so agent retries return the existing draft instead of queueing duplicates.
    - Risk is inferred when `--risk` is omitted: raw/unknown recipients are high risk, leads/personal contacts are medium risk, known/vendor/client contacts are low risk, and campaign/follow-up sends are high risk.
    - High-risk drafts require `--confirm-high-risk` before approval.
    - `--approve-by Chris` approves without sending.
@@ -39,6 +40,7 @@ This packet documents the branch that moves Text Mailroom from a safe queue foun
    - Resolves the recipient from the inbox thread and queues a `conversation_reply`.
    - Default behavior queues only.
    - Safe summaries include the thread id and risk, but not the raw sender or body.
+   - Supports `--request-id <id>` for retry-safe reply drafting.
    - High-risk replies require `--confirm-high-risk` before approval.
    - `--send` requires `--approve-by` and `--confirm-send`, then still hits the same env gates.
 
@@ -72,6 +74,7 @@ This packet documents the branch that moves Text Mailroom from a safe queue foun
 - Omitted risk is inferred in the queue layer, not just the CLI, and explicit `--risk` still overrides inference.
 - `request-reply` resolves recipients from stored threads and refuses missing `--confirm-send` before queueing any send attempt.
 - High-risk approval is enforced in the shared approval layer, so CLI and future callers must explicitly confirm high-risk drafts before approval.
+- Idempotency is enforced in the shared proposal layer: same `requestId` plus same payload returns the existing item, while same `requestId` plus different recipient/body/kind fails closed.
 - `text-mailroom status` redacts BlueBubbles server URLs, passwords, raw phone numbers, and message bodies.
 - `enable-bluebubbles-ingest` dry-runs by default and its summary redacts BlueBubbles server URLs, passwords, and allowlisted recipients.
 - Campaign sends are still bounded by allowed recipient hashes, expiry, max sends, and campaign send locks.
@@ -89,7 +92,7 @@ Focused:
   extensions/bluebubbles/src/text-mailroom-outbound.test.ts
 ```
 
-Latest result: 4 files / 92 tests passed.
+Latest result: 4 files / 94 tests passed.
 
 Broader:
 
@@ -102,7 +105,7 @@ Broader:
   src/config/config.plugin-validation.test.ts
 ```
 
-Latest result: 17 files / 333 tests passed.
+Latest result: 17 files / 335 tests passed.
 
 Format:
 

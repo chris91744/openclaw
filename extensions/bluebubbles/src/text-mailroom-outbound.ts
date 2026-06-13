@@ -70,6 +70,7 @@ type ProposalInput = {
   campaignId?: string;
   contactId?: string;
   threadId?: string;
+  requestId?: string;
   requestedBy?: string;
 };
 
@@ -162,6 +163,7 @@ export async function proposeTextMailroomOutbound(
   }
   const recipient = normalizeTextMailroomPhone(input.recipient);
   const recipientHash = hashTextMailroomRecipient(recipient);
+  const bodyHash = hashTextMailroomBody(body);
   const contact = input.contactId
     ? await loadTextMailroomContact(options, input.contactId)
     : await findContactByPhoneHash(options, recipientHash);
@@ -178,6 +180,29 @@ export async function proposeTextMailroomOutbound(
     }
     validateCampaignForRecipient(campaign, recipientHash, options);
   }
+  const requestId = normalizeRequestId(input.requestId);
+  if (requestId) {
+    const existing = await findOutboundByRequestId(options, requestId);
+    if (existing) {
+      assertMatchingIdempotentRequest(existing, {
+        kind: input.kind,
+        recipientHash,
+        bodyHash,
+        campaignId: input.campaignId,
+        contactId: contact?.contactId ?? input.contactId,
+        threadId: input.threadId?.trim() || undefined,
+      });
+      await appendTextMailroomAudit(options, {
+        type: "text_mailroom.outbound.deduped",
+        itemId: existing.id,
+        campaignId: existing.campaignId,
+        contactId: existing.contactId,
+        recipientHash: existing.recipientHash,
+        bodyHash: existing.bodyHash,
+      });
+      return existing;
+    }
+  }
   const now = textMailroomNow(options.now);
   const item: TextMailroomOutboundItem = {
     id: textMailroomId("outbound"),
@@ -187,10 +212,11 @@ export async function proposeTextMailroomOutbound(
     recipient,
     recipientHash,
     body,
-    bodyHash: hashTextMailroomBody(body),
+    bodyHash,
     campaignId: input.campaignId,
     contactId: contact?.contactId ?? input.contactId,
     threadId: input.threadId?.trim() || undefined,
+    requestId,
     reason: input.reason.trim(),
     source: input.source.trim() || "agent",
     risk: inferOutboundRisk(input, contact),
@@ -560,6 +586,48 @@ async function findContactByPhoneHash(
     textMailroomPaths(options.rootDir).contacts,
   );
   return contacts.find((contact) => contact.phoneHash === phoneHash) ?? null;
+}
+
+async function findOutboundByRequestId(
+  options: TextMailroomStoreOptions,
+  requestId: string,
+): Promise<TextMailroomOutboundItem | null> {
+  const items = await listTextMailroomOutboundItems(options);
+  return items.find((item) => item.requestId === requestId) ?? null;
+}
+
+function assertMatchingIdempotentRequest(
+  existing: TextMailroomOutboundItem,
+  input: {
+    kind: TextMailroomOutboundKind;
+    recipientHash: string;
+    bodyHash: string;
+    campaignId?: string;
+    contactId?: string;
+    threadId?: string;
+  },
+): void {
+  const matches =
+    existing.kind === input.kind &&
+    existing.recipientHash === input.recipientHash &&
+    existing.bodyHash === input.bodyHash &&
+    (existing.campaignId ?? "") === (input.campaignId ?? "") &&
+    (existing.contactId ?? "") === (input.contactId ?? "") &&
+    (existing.threadId ?? "") === (input.threadId ?? "");
+  if (!matches) {
+    throw new Error("Text Mailroom request_id already exists with different outbound payload");
+  }
+}
+
+function normalizeRequestId(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  if (trimmed.length > 160) {
+    throw new Error("Text Mailroom request_id is too long");
+  }
+  return trimmed;
 }
 
 function validateCampaignForRecipient(

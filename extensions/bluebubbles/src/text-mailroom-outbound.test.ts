@@ -194,6 +194,49 @@ describe("Text Mailroom outbound approvals", () => {
     });
   });
 
+  it("dedupes_retried_outbound_proposals_by_request_id", async () => {
+    const rootDir = await makeRoot();
+    const first = await proposeTextMailroomOutbound(
+      { rootDir },
+      {
+        kind: "manual",
+        recipient: "+15551234567",
+        body: "hello",
+        reason: "retry-safe request",
+        source: "agent",
+        requestId: "agent-request-1",
+      },
+    );
+    const retry = await proposeTextMailroomOutbound(
+      { rootDir },
+      {
+        kind: "manual",
+        recipient: "+1 (555) 123-4567",
+        body: "hello",
+        reason: "retry-safe request",
+        source: "agent",
+        requestId: "agent-request-1",
+      },
+    );
+
+    expect(retry.id).toBe(first.id);
+    expect(retry.requestId).toBe("agent-request-1");
+    await expect(listTextMailroomOutboundItems({ rootDir })).resolves.toHaveLength(1);
+    await expect(
+      proposeTextMailroomOutbound(
+        { rootDir },
+        {
+          kind: "manual",
+          recipient: "+15551234567",
+          body: "different body",
+          reason: "retry collision",
+          source: "agent",
+          requestId: "agent-request-1",
+        },
+      ),
+    ).rejects.toThrow("request_id already exists with different outbound payload");
+  });
+
   it("requires_approval_and_two_opt_in_flags_before_sender_can_run", async () => {
     const rootDir = await makeRoot();
     const sender = vi.fn(async () => ({ messageId: "msg-1" }));
