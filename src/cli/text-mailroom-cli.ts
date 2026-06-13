@@ -299,20 +299,62 @@ async function resolveRequestSendRecipient(params: {
   rootDir: string;
   to?: string;
   contactId?: string;
-}): Promise<string> {
+  contactQuery?: string;
+}): Promise<{ recipient: string; contactId?: string }> {
   const contactId = params.contactId?.trim();
+  const contactQuery = params.contactQuery?.trim();
   const to = params.to?.trim();
+  const selected = [to, contactId, contactQuery].filter(Boolean);
+  if (selected.length > 1) {
+    throw new Error("request-send accepts only one of --to, --contact-id, or --contact");
+  }
   if (contactId) {
-    if (to) {
-      throw new Error("request-send accepts either --to or --contact-id, not both");
-    }
     const contact = await loadTextMailroomContact({ rootDir: params.rootDir }, contactId);
     if (!contact) {
       throw new Error("Text Mailroom contact not found");
     }
-    return contact.phone;
+    return { recipient: contact.phone, contactId: contact.contactId };
   }
-  return requireOption(to, "--to or --contact-id");
+  if (contactQuery) {
+    const contact = await resolveSingleContactByQuery({
+      rootDir: params.rootDir,
+      query: contactQuery,
+    });
+    return { recipient: contact.phone, contactId: contact.contactId };
+  }
+  return { recipient: requireOption(to, "--to, --contact-id, or --contact") };
+}
+
+async function resolveSingleContactByQuery(params: {
+  rootDir: string;
+  query: string;
+}): Promise<Awaited<ReturnType<typeof listTextMailroomContacts>>[number]> {
+  const needle = normalizeContactQuery(params.query);
+  const contacts = await listTextMailroomContacts({ rootDir: params.rootDir });
+  const exactMatches = contacts.filter((contact) => {
+    return (
+      normalizeContactQuery(contact.contactId) === needle ||
+      normalizeContactQuery(contact.displayName ?? "") === needle ||
+      contact.labels.some((label) => normalizeContactQuery(label) === needle)
+    );
+  });
+  const matches =
+    exactMatches.length > 0
+      ? exactMatches
+      : contacts.filter((contact) =>
+          normalizeContactQuery(contact.displayName ?? "").includes(needle),
+        );
+  if (matches.length === 0) {
+    throw new Error("Text Mailroom contact query did not match any saved contact");
+  }
+  if (matches.length > 1) {
+    throw new Error("Text Mailroom contact query matched multiple contacts; use --contact-id");
+  }
+  return matches[0]!;
+}
+
+function normalizeContactQuery(value: string): string {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
@@ -563,6 +605,7 @@ export function registerTextMailroomCli(program: Command) {
     .option("--risk <risk>", "low, medium, or high", "medium")
     .option("--campaign-id <id>", "Campaign id")
     .option("--contact-id <id>", "Contact id")
+    .option("--contact <query>", "Saved contact id, exact name, label, or unique name fragment")
     .option("--thread-id <id>", "Thread id")
     .option("--approve-by <name>", "Approver name; approval still does not send")
     .option("--send", "Attempt sending after approval")
@@ -577,6 +620,7 @@ export function registerTextMailroomCli(program: Command) {
         risk?: TextMailroomRisk;
         campaignId?: string;
         contactId?: string;
+        contact?: string;
         threadId?: string;
         approveBy?: string;
         send?: boolean;
@@ -590,22 +634,23 @@ export function registerTextMailroomCli(program: Command) {
         }
 
         const rootDir = resolveRoot(root);
-        const recipient = await resolveRequestSendRecipient({
+        const resolvedRecipient = await resolveRequestSendRecipient({
           rootDir,
           to: opts.to,
           contactId: opts.contactId,
+          contactQuery: opts.contact,
         });
         let item = await proposeTextMailroomOutbound(
           { rootDir },
           {
             kind: opts.kind ?? "manual",
-            recipient,
+            recipient: resolvedRecipient.recipient,
             body: requireOption(opts.body, "--body"),
             reason: requireOption(opts.reason, "--reason"),
             source: opts.source ?? "cli",
             risk: opts.risk ?? "medium",
             campaignId: opts.campaignId,
-            contactId: opts.contactId,
+            contactId: resolvedRecipient.contactId ?? opts.contactId,
             threadId: opts.threadId,
           },
         );

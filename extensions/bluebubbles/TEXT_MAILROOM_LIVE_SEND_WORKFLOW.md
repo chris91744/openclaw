@@ -24,7 +24,9 @@ This packet documents the branch that moves Text Mailroom from a safe queue foun
    - New CLI: `openclaw text-mailroom request-send`.
    - Default behavior queues only.
    - Supports `--contact-id contact_...` so saved contacts can be queued without retyping raw phone numbers.
-   - `--to` and `--contact-id` are mutually exclusive to avoid recipient/contact mismatch.
+   - Supports `--contact <query>` for a saved contact id, exact name, exact label, or unique name fragment.
+   - `--to`, `--contact-id`, and `--contact` are mutually exclusive to avoid recipient/contact mismatch.
+   - Ambiguous contact lookups fail closed and require `--contact-id`.
    - `--approve-by Chris` approves without sending.
    - `--send` requires `--confirm-send` before any send attempt.
    - The underlying sender still requires `OPENCLAW_TEXT_MAILROOM_SEND_OPTIN=1`.
@@ -55,7 +57,8 @@ This packet documents the branch that moves Text Mailroom from a safe queue foun
 - Inbound ingestion is opt-in via config and records local store files only.
 - Text Mailroom send remains approval-bound and env-gated.
 - The BlueBubbles transport remains separately env-gated.
-- `request-send --contact-id` resolves the stored contact internally and keeps list/request summaries redacted.
+- `request-send --contact-id` and `request-send --contact` resolve stored contacts internally and keep list/request summaries redacted.
+- Ambiguous `request-send --contact` lookups refuse before queueing.
 - `text-mailroom status` redacts BlueBubbles server URLs, passwords, raw phone numbers, and message bodies.
 - `enable-bluebubbles-ingest` dry-runs by default and its summary redacts BlueBubbles server URLs, passwords, and allowlisted recipients.
 - Campaign sends are still bounded by allowed recipient hashes, expiry, max sends, and campaign send locks.
@@ -73,7 +76,7 @@ Focused:
   extensions/bluebubbles/src/text-mailroom-outbound.test.ts
 ```
 
-Latest result: 4 files / 85 tests passed.
+Latest result: 4 files / 87 tests passed.
 
 Broader:
 
@@ -86,7 +89,7 @@ Broader:
   src/config/config.plugin-validation.test.ts
 ```
 
-Latest result: 17 files / 326 tests passed.
+Latest result: 17 files / 328 tests passed.
 
 Format:
 

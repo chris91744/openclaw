@@ -288,6 +288,58 @@ describe("text-mailroom cli", () => {
     expect(output).not.toContain("Secret contact-id body");
   });
 
+  it("request_send_can_queue_by_unique_contact_name_without_echoing_the_raw_phone_or_body", async () => {
+    const root = await makeRoot();
+    const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
+
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "--json",
+      "contacts",
+      "upsert",
+      "--phone",
+      "+15551234567",
+      "--name",
+      "Marina Handyman",
+      "--labels",
+      "lead,vendor",
+    ]);
+    const contact = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as { contactId: string };
+    log.mockClear();
+
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "--json",
+      "request-send",
+      "--contact",
+      "marina handyman",
+      "--body",
+      "Secret contact-name body",
+      "--reason",
+      "operator natural contact smoke",
+    ]);
+    const queued = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as {
+      id: string;
+      contactId?: string;
+      stage: string;
+      status: string;
+    };
+    expect(queued.id).toMatch(/^outbound_/);
+    expect(queued.contactId).toBe(contact.contactId);
+    expect(queued.stage).toBe("queued");
+    expect(queued.status).toBe("queued");
+
+    await runCli(["text-mailroom", "--root", root, "list"]);
+    const output = log.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("operator natural contact smoke");
+    expect(output).not.toContain("+15551234567");
+    expect(output).not.toContain("Secret contact-name body");
+  });
+
   it("request_send_rejects_conflicting_to_and_contact_id", async () => {
     const root = await makeRoot();
     const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
@@ -321,7 +373,54 @@ describe("text-mailroom cli", () => {
         "--reason",
         "conflict smoke",
       ]),
-    ).rejects.toThrow("either --to or --contact-id");
+    ).rejects.toThrow("only one of --to, --contact-id, or --contact");
+  });
+
+  it("request_send_rejects_ambiguous_contact_queries", async () => {
+    const root = await makeRoot();
+    vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
+
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "contacts",
+      "upsert",
+      "--phone",
+      "+15551234567",
+      "--name",
+      "Marina Handyman One",
+      "--labels",
+      "vendor",
+    ]);
+    await runCli([
+      "text-mailroom",
+      "--root",
+      root,
+      "contacts",
+      "upsert",
+      "--phone",
+      "+15557654321",
+      "--name",
+      "Marina Handyman Two",
+      "--labels",
+      "vendor",
+    ]);
+
+    await expect(
+      runCli([
+        "text-mailroom",
+        "--root",
+        root,
+        "request-send",
+        "--contact",
+        "vendor",
+        "--body",
+        "hello",
+        "--reason",
+        "ambiguous contact smoke",
+      ]),
+    ).rejects.toThrow("matched multiple contacts");
   });
 
   it("request_send_refuses_send_without_confirm_before_queueing", async () => {
